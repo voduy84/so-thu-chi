@@ -13,7 +13,7 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('');
   
   // 👉 THAY ĐỔI MẬT KHẨU CỦA BẠN Ở ĐÂY
-  const STATIC_PASSWORD = 'admin'; 
+  const STATIC_PASSWORD = 'bundaucuabanoi1'; 
 
   // Các trạng thái dữ liệu (Data States)
   const [projects, setProjects] = useState([]);
