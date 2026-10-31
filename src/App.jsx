@@ -13,7 +13,7 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('');
   
   // 👉 THAY ĐỔI MẬT KHẨU CỦA BẠN Ở ĐÂY
-  const STATIC_PASSWORD = 'bundaucuabanoi1'; 
+  const STATIC_PASSWORD = 'admin'; 
 
   // Các trạng thái dữ liệu (Data States)
   const [projects, setProjects] = useState([]);
@@ -236,4 +236,25 @@ export default function App() {
               {templates.map(t => <button key={t.id} onClick={() => applyTemplate(t)} className="px-3 py-1 bg-white border rounded-md text-blue-700">{t.name}</button>)}
             </div>
           )}
-          <div className="flex gap-2
+          <div className="flex gap-2 mb-6">
+            <button className={`flex-1 py-3 font-bold rounded-lg ${txType === 'income' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('income'); setCategory(categories.find(c => c.type === 'income')?.name || ''); }}>+ KHOẢN THU</button>
+            <button className={`flex-1 py-3 font-bold rounded-lg ${txType === 'expense' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('expense'); setCategory(categories.find(c => c.type === 'expense')?.name || ''); }}>- KHOẢN CHI</button>
+          </div>
+          <div className="space-y-4">
+            <div>
+              <label className="block font-bold mb-2">Số Tiền (VNĐ) *</label>
+              <input type="text" value={amountStr} onChange={(e) => setAmountStr(formatCurrency(e.target.value))} className="w-full text-2xl p-3 border-2 rounded-lg" placeholder="1,000,000" />
+            </div>
+            <div className="flex gap-4">
+              <div className="flex-1"><label className="block font-bold mb-2">Ngày</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full p-3 border-2 rounded-lg" /></div>
+              <div className="flex-1">
+                <label className="block font-bold mb-2">Danh Mục</label>
+                <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full p-3 border-2 rounded-lg">
+                  {categories.filter(c => c.type === txType).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div><label className="block font-bold mb-2">Ghi Chú</label><input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} className="w-full p-3 border-2 rounded-lg" /></div>
+          </div>
+          <div className="mt-8 flex justify-end gap-4">
+            <button onClick={()
