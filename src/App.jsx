@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key, Download } from 'lucide-react';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -37,25 +36,22 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   
-  // Modals & States
   const [showTxModal, setShowTxModal] = useState(false);
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [showChangePassModal, setShowChangePassModal] = useState(false); // Modal Đổi Pass
+  const [showChangePassModal, setShowChangePassModal] = useState(false); 
   const [transactionToPrint, setTransactionToPrint] = useState(null);
   const [showFilter, setShowFilter] = useState(false);
   
-  const [dateFilter, setDateFilter] = useState('all');
+  const [dateFilter, setDateFilter] = useState('all'); // 'all', 'today', 'month', 'year'
   const [chartGroup, setChartGroup] = useState('month');
   const [uncheckedCategories, setUncheckedCategories] = useState([]);
 
-  // Khôi phục phiên đăng nhập
   useEffect(() => {
     const savedUser = sessionStorage.getItem('stc_current_user');
     if (savedUser) setCurrentUser(JSON.parse(savedUser));
   }, []);
 
-  // --- LOGIC ĐĂNG NHẬP MỚI (KIỂM TRA CSDL TRƯỚC) ---
   const handleLogin = async (e) => {
     e.preventDefault();
     const uid = usernameInput.toLowerCase().trim();
@@ -68,12 +64,11 @@ export default function App() {
 
     let activePassword = userAcc.defaultPassword;
 
-    // Kiểm tra xem user đã từng đổi pass trên Supabase chưa
     if (supabase) {
       try {
-        const { data, error } = await supabase.from('app_users').select('password').eq('username', uid).single();
+        const { data } = await supabase.from('app_users').select('password').eq('username', uid).single();
         if (data && data.password) {
-          activePassword = data.password; // Lấy pass mới ghi đè pass mặc định
+          activePassword = data.password;
         }
       } catch (err) {
         console.error("Lỗi khi kiểm tra mật khẩu", err);
@@ -102,10 +97,18 @@ export default function App() {
   const fetchData = async () => {
     if (supabase) {
       try {
-        const { data: pData } = await supabase.from('projects').select('*');
-        const { data: tData } = await supabase.from('transactions').select('*');
-        const { data: tmplData } = await supabase.from('templates').select('*');
-        const { data: catData } = await supabase.from('custom_categories').select('*');
+        const [
+          { data: pData },
+          { data: tData },
+          { data: tmplData },
+          { data: catData }
+        ] = await Promise.all([
+          supabase.from('projects').select('*'),
+          supabase.from('transactions').select('*'),
+          supabase.from('templates').select('*'),
+          supabase.from('custom_categories').select('*')
+        ]);
+        
         if (pData) setProjects(pData);
         if (tData) setTransactions(tData);
         if (tmplData) setTemplates(tmplData);
@@ -220,8 +223,9 @@ export default function App() {
     else setTemplates(templates.filter(t => t.id !== id));
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     if (filteredTransactions.length === 0) return alert('Không có dữ liệu để xuất!');
+    const XLSX = await import('xlsx');
     const excelData = filteredTransactions.map(t => ({
       'Ngày': t.date,
       'Giờ': new Date(t.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
@@ -243,6 +247,7 @@ export default function App() {
     const dateObj = new Date(t.created_at);
     const timeStr = dateObj.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     const dateStr = dateObj.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
     return (
       <div className="w-full text-black font-serif bg-white p-4">
         <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-6">
@@ -269,7 +274,6 @@ export default function App() {
     );
   };
 
-  // --- CỬA SỔ ĐỔI MẬT KHẨU ---
   const ChangePasswordModal = () => {
     const [oldPass, setOldPass] = useState('');
     const [newPass, setNewPass] = useState('');
@@ -280,7 +284,6 @@ export default function App() {
       if (newPass !== confirmPass) return alert('Mật khẩu mới không khớp nhau!');
       if (!supabase) return alert('Không có kết nối CSDL, không thể đổi mật khẩu!');
 
-      // 1. Kiểm tra mật khẩu cũ
       let currentActivePass = ACCOUNTS[currentUser.username].defaultPassword;
       const { data } = await supabase.from('app_users').select('password').eq('username', currentUser.username).single();
       if (data && data.password) currentActivePass = data.password;
@@ -289,7 +292,6 @@ export default function App() {
         return alert('Mật khẩu cũ không chính xác!');
       }
 
-      // 2. Lưu mật khẩu mới lên Supabase
       const { error } = await supabase.from('app_users').upsert({ username: currentUser.username, password: newPass });
       if (error) {
         alert('Có lỗi xảy ra: ' + error.message);
@@ -437,12 +439,7 @@ export default function App() {
                 <User className="w-3 h-3 md:w-4 md:h-4 text-blue-300" />
                 <span className="font-bold text-xs md:text-sm text-blue-100 truncate max-w-[80px] md:max-w-full">{currentUser.displayName}</span>
               </div>
-              
-              {/* Nút Đổi Mật Khẩu */}
-              <button onClick={() => setShowChangePassModal(true)} className="flex items-center justify-center bg-blue-600 p-1.5 md:px-3 md:py-2 rounded-lg font-bold hover:bg-blue-500 text-xs md:text-sm" title="Đổi mật khẩu">
-                 <Key className="w-4 h-4 md:w-5 md:h-5" />
-              </button>
-
+              <button onClick={() => setShowChangePassModal(true)} className="flex items-center justify-center bg-blue-600 p-1.5 md:px-3 md:py-2 rounded-lg font-bold hover:bg-blue-500 text-xs md:text-sm" title="Đổi mật khẩu"><Key className="w-4 h-4 md:w-5 md:h-5" /></button>
               <button onClick={() => setShowProjectModal(true)} className="flex items-center gap-1 md:gap-2 bg-blue-600 px-2 py-1.5 md:px-4 md:py-2 rounded-lg font-bold hover:bg-blue-500 text-xs md:text-sm"><BookOpen className="w-4 h-4 md:w-5 md:h-5" /> <span className="hidden md:inline">Sổ Của Tôi</span></button>
               <button onClick={handleLogout} className="flex items-center justify-center bg-red-600 p-1.5 md:px-4 md:py-2 rounded-lg font-bold hover:bg-red-500" title="Đăng xuất"><Lock className="w-4 h-4 md:w-5 md:h-5" /></button>
             </div>
@@ -454,16 +451,19 @@ export default function App() {
             <div className="text-center py-20"><h2 className="text-lg md:text-2xl font-bold text-gray-600 mb-6">Bạn chưa chọn hoặc chưa có Sổ Thu Chi nào.</h2><button onClick={() => handleAddProject(prompt('Nhập tên sổ:'))} className="px-6 py-3 md:px-8 md:py-4 bg-blue-600 text-white font-bold text-base md:text-xl rounded-xl shadow-md">+ Tạo Sổ Mới</button></div>
           ) : (
             <>
-              <div className="flex flex-col md:flex-row justify-between items-center gap-3 md:gap-4 mb-4 md:mb-8 bg-white p-3 md:p-4 rounded-xl shadow-sm border">
-                <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto">
-                  <span className="font-bold text-sm md:text-base whitespace-nowrap">Sổ hiện tại:</span>
-                  <select value={selectedProjectId || ''} onChange={(e) => setSelectedProjectId(e.target.value)} className="w-full md:w-auto text-sm md:text-xl font-bold p-1.5 md:p-2 border-2 rounded-lg bg-gray-50">{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+              {/* THANH ĐIỀU KHIỂN & NÚT GHI THU/CHI TO NỔI BẬT */}
+              <div className="flex flex-col gap-3 mb-4 md:mb-6 bg-white p-3 md:p-4 rounded-xl shadow-sm border">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 w-full">
+                    <span className="font-bold text-sm md:text-base whitespace-nowrap">Sổ hiện tại:</span>
+                    <select value={selectedProjectId || ''} onChange={(e) => setSelectedProjectId(e.target.value)} className="w-full text-sm md:text-xl font-bold p-1.5 md:p-2 border-2 rounded-lg bg-gray-50">{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+                  </div>
                 </div>
-                <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
-                  <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="p-2 md:p-3 text-xs md:text-base border-2 rounded-lg font-bold"><option value="all">🕒 Tất cả</option><option value="today">📅 Hôm nay</option><option value="month">🗓️ Tháng này</option><option value="year">📆 Năm nay</option></select>
-                  <button onClick={exportToExcel} className="flex items-center justify-center gap-1 md:gap-2 bg-green-600 text-white px-3 py-2 md:px-4 md:py-3 rounded-lg font-bold text-xs md:text-lg hover:bg-green-700 shadow-md whitespace-nowrap">📥 Xuất Excel</button>
-                  <button onClick={() => setShowTxModal(true)} className="flex items-center justify-center gap-1 md:gap-2 bg-blue-600 text-white px-3 py-2 md:px-6 md:py-3 rounded-lg font-bold text-xs md:text-lg hover:bg-blue-700 shadow-md whitespace-nowrap"><Plus className="w-4 h-4 md:w-6 md:h-6" /> GHI THU/CHI</button>
-                </div>
+                
+                {/* Nút Ghi Thu / Chi làm tràn viền nổi bật nhất */}
+                <button onClick={() => setShowTxModal(true)} className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-3.5 md:py-4 rounded-xl font-extrabold text-lg md:text-xl hover:bg-blue-700 shadow-lg transition active:scale-[0.99]">
+                  <Plus className="w-7 h-7 stroke-[3]" /> GHI THU / CHI NAY
+                </button>
               </div>
               
               <div className="flex gap-1 md:gap-2 mb-4 md:mb-6 bg-white p-1.5 md:p-2 rounded-xl border shadow-sm">
@@ -474,6 +474,18 @@ export default function App() {
 
               {activeTab === 'dashboard' && (
                 <div className="space-y-4 md:space-y-6">
+                  
+                  {/* BỘ LỌC THỜI GIAN 4 NÚT BẤM TRẢI NGANG TRƯỚC BIỂU ĐỒ */}
+                  <div className="bg-white p-3 rounded-xl border shadow-sm">
+                    <p className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Khoảng thời gian thống kê:</p>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      <button onClick={() => setDateFilter('today')} className={`py-2 px-1 text-xs md:text-sm font-bold rounded-lg border text-center transition ${dateFilter === 'today' ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}>Hôm nay</button>
+                      <button onClick={() => setDateFilter('month')} className={`py-2 px-1 text-xs md:text-sm font-bold rounded-lg border text-center transition ${dateFilter === 'month' ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}>Tháng này</button>
+                      <button onClick={() => setDateFilter('year')} className={`py-2 px-1 text-xs md:text-sm font-bold rounded-lg border text-center transition ${dateFilter === 'year' ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}>Năm nay</button>
+                      <button onClick={() => setDateFilter('all')} className={`py-2 px-1 text-xs md:text-sm font-bold rounded-lg border text-center transition ${dateFilter === 'all' ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}>Tất cả</button>
+                    </div>
+                  </div>
+
                   <div className="bg-white p-3 md:p-4 rounded-xl border shadow-sm">
                     <button onClick={() => setShowFilter(!showFilter)} className="w-full flex justify-between items-center text-left text-sm md:text-base font-bold text-gray-700 pb-1"><span className="flex items-center gap-2"><Filter className="w-4 h-4" /> Lọc hiển thị theo Danh mục</span>{showFilter ? <ChevronUp className="w-5 h-5 text-gray-500" /> : <ChevronDown className="w-5 h-5 text-gray-500" />}</button>
                     {showFilter && (<div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">{categories.map(cat => (<label key={cat.id} className="flex items-center gap-1.5 cursor-pointer px-2 py-1.5 md:p-2 bg-gray-50 rounded border hover:bg-gray-100 text-xs md:text-sm"><input type="checkbox" checked={!uncheckedCategories.includes(cat.name)} onChange={() => { setUncheckedCategories(prev => prev.includes(cat.name) ? prev.filter(c => c !== cat.name) : [...prev, cat.name]) }} className="w-4 h-4 md:w-5 md:h-5 accent-blue-600" /><span className={`font-bold ${cat.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>{cat.name}</span></label>))}</div>)}
@@ -484,6 +496,7 @@ export default function App() {
                     <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-red-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">TỔNG CHI (Đã Lọc)</p><p className="text-xl md:text-3xl font-extrabold text-red-600">{formatCurrency(summary.expense)} đ</p></div>
                     <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-blue-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">SỐ DƯ CÔNG NỢ</p><p className="text-xl md:text-3xl font-extrabold text-blue-700">{formatCurrency(summary.income - summary.expense)} đ</p></div>
                   </div>
+                  
                   <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border">
                     <div className="flex justify-between items-center mb-4 md:mb-6"><h3 className="text-base md:text-xl font-bold">Biểu Đồ So Sánh</h3><select value={chartGroup} onChange={(e) => setChartGroup(e.target.value)} className="p-1.5 md:p-2 text-sm md:text-base border-2 rounded-lg font-bold"><option value="day">Ngày</option><option value="month">Tháng</option><option value="year">Năm</option></select></div>
                     <div className="h-64 md:h-80"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" tick={{fontSize: 12}} /><YAxis tick={{fontSize: 12}} tickFormatter={(v) => v===0?'0':`${v/1000}k`} /><Tooltip formatter={(v) => formatCurrency(v)+' đ'} /><Legend wrapperStyle={{fontSize: "12px"}} /><Bar dataKey="income" name="Thu" fill="#16a34a" /><Bar dataKey="expense" name="Chi" fill="#dc2626" /></BarChart></ResponsiveContainer></div>
@@ -492,22 +505,32 @@ export default function App() {
               )}
 
               {activeTab === 'list' && (
-                <div className="bg-white rounded-xl shadow-sm border overflow-x-auto">
-                  <table className="w-full text-left min-w-[600px]">
-                    <thead className="bg-gray-100 border-b"><tr><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Ngày</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Nội dung</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Người nhập</th><th className="p-3 md:p-4 text-xs md:text-sm text-right font-bold text-gray-600">Số Tiền</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">In</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">Xóa</th></tr></thead>
-                    <tbody>
-                      {filteredTransactions.map(t => (
-                        <tr key={t.id} className="border-b hover:bg-gray-50 text-sm">
-                          <td className="p-3 md:p-4 text-gray-700 whitespace-nowrap">{t.date}</td>
-                          <td className="p-3 md:p-4"><p className="font-semibold text-gray-800">{t.category}</p><p className="text-xs text-gray-500">{t.description}</p></td>
-                          <td className="p-3 md:p-4"><span className="px-2 py-1 bg-gray-100 text-gray-600 text-[10px] md:text-xs font-bold rounded-md border">{t.created_by || 'Khuyết danh'}</span></td>
-                          <td className={`p-3 md:p-4 text-right font-bold whitespace-nowrap ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}</td>
-                          <td className="p-3 md:p-4 text-center"><button onClick={() => setTransactionToPrint(t)} className="text-blue-500 hover:text-blue-700 mx-auto block p-1.5 md:p-2 rounded hover:bg-blue-50" title="In phiếu này"><Printer className="w-4 h-4 md:w-5 md:h-5" /></button></td>
-                          <td className="p-3 md:p-4 text-center">{currentUser.role === 'admin' ? (<button onClick={() => { if(window.confirm('Xóa?')) { supabase ? supabase.from('transactions').delete().eq('id', t.id).then(fetchData) : setTransactions(transactions.filter(tx => tx.id !== t.id)); } }} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4 md:w-5 md:h-5 mx-auto" /></button>) : (<ShieldAlert className="w-4 h-4 mx-auto text-gray-300" title="Không quyền xóa" />)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-4">
+                  {/* NÚT XUẤT EXCEL ĐƯỢC ĐẶT NGAY DƯỚI/TRÊN BẢNG BIỂU CHO DỄ THẤY */}
+                  <div className="flex justify-between items-center bg-white p-3 rounded-xl border shadow-sm">
+                    <span className="text-sm font-bold text-gray-700">Danh sách giao dịch chi tiết ({filteredTransactions.length})</span>
+                    <button onClick={exportToExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow">
+                      <Download className="w-4 h-4" /> Xuất Excel
+                    </button>
+                  </div>
+
+                  <div className="bg-white rounded-xl shadow-sm border overflow-x-auto">
+                    <table className="w-full text-left min-w-[600px]">
+                      <thead className="bg-gray-100 border-b"><tr><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Ngày</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Nội dung</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Người nhập</th><th className="p-3 md:p-4 text-xs md:text-sm text-right font-bold text-gray-600">Số Tiền</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">In</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">Xóa</th></tr></thead>
+                      <tbody>
+                        {filteredTransactions.map(t => (
+                          <tr key={t.id} className="border-b hover:bg-gray-50 text-sm">
+                            <td className="p-3 md:p-4 text-gray-700 whitespace-nowrap">{t.date}</td>
+                            <td className="p-3 md:p-4"><p className="font-semibold text-gray-800">{t.category}</p><p className="text-xs text-gray-500">{t.description}</p></td>
+                            <td className="p-3 md:p-4"><span className="px-2 py-1 bg-gray-100 text-gray-600 text-[10px] md:text-xs font-bold rounded-md border">{t.created_by || 'Khuyết danh'}</span></td>
+                            <td className={`p-3 md:p-4 text-right font-bold whitespace-nowrap ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}</td>
+                            <td className="p-3 md:p-4 text-center"><button onClick={() => setTransactionToPrint(t)} className="text-blue-500 hover:text-blue-700 mx-auto block p-1.5 md:p-2 rounded hover:bg-blue-50" title="In phiếu này"><Printer className="w-4 h-4 md:w-5 md:h-5" /></button></td>
+                            <td className="p-3 md:p-4 text-center">{currentUser.role === 'admin' ? (<button onClick={() => { if(window.confirm('Xóa?')) { supabase ? supabase.from('transactions').delete().eq('id', t.id).then(fetchData) : setTransactions(transactions.filter(tx => tx.id !== t.id)); } }} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4 md:w-5 md:h-5 mx-auto" /></button>) : (<ShieldAlert className="w-4 h-4 mx-auto text-gray-300" title="Không quyền xóa" />)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
               
@@ -529,7 +552,6 @@ export default function App() {
           )}
         </main>
 
-        {/* MODALS */}
         {showProjectModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl max-w-lg w-full p-4 md:p-6 shadow-xl"><div className="flex justify-between items-center mb-4 md:mb-6"><h3 className="text-xl md:text-2xl font-bold">Quản Lý Sổ</h3><button onClick={() => setShowProjectModal(false)}><X className="text-gray-500 w-6 h-6 md:w-8 md:h-8" /></button></div><div className="space-y-3 mb-6 max-h-80 overflow-y-auto">{projects.map(p => (<div key={p.id} className="flex justify-between items-center p-3 md:p-4 border rounded-lg bg-gray-50"><span className="font-bold text-sm md:text-lg">{p.name}</span><button onClick={() => handleDeleteProject(p.id)} className="text-red-500 p-2 hover:bg-red-100 rounded-lg"><Trash2 className="w-4 h-4 md:w-5 md:h-5" /></button></div>))}</div><button onClick={() => handleAddProject(prompt('Tên sổ mới:'))} className="w-full py-2.5 md:py-3 text-sm md:text-base bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">+ Tạo Sổ Mới</button></div>
