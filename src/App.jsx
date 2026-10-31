@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
-// === HỆ THỐNG TÀI KHOẢN & PHÂN QUYỀN ===
+// === HỆ THỐNG TÀI KHOẢN (Mật khẩu mặc định) ===
 const ACCOUNTS = {
-  'quanly': { password: 'quanly@11231', role: 'admin', displayName: 'Quản Lý' },
-  'nhanvien1': { password: 'msthuy1191#', role: 'staff', displayName: 'Ms. Thuỷ' },
-  'nhanvien2': { password: 'msngoc11933#', role: 'staff', displayName: 'Ms. Ngọc' }
+  'quanly': { defaultPassword: 'quanly@11231', role: 'admin', displayName: 'Quản Lý' },
+  'nhanvien1': { defaultPassword: 'msthuy1191#', role: 'staff', displayName: 'Ms. Thuỷ' },
+  'nhanvien2': { defaultPassword: 'msngoc11933#', role: 'staff', displayName: 'Ms. Ngọc' }
 };
 
 export default function App() {
@@ -41,29 +41,51 @@ export default function App() {
   const [showTxModal, setShowTxModal] = useState(false);
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showChangePassModal, setShowChangePassModal] = useState(false); // Modal Đổi Pass
   const [transactionToPrint, setTransactionToPrint] = useState(null);
-  const [showFilter, setShowFilter] = useState(false); // Đóng mở khu vực lọc
+  const [showFilter, setShowFilter] = useState(false);
   
-  // Bộ lọc
   const [dateFilter, setDateFilter] = useState('all');
   const [chartGroup, setChartGroup] = useState('month');
   const [uncheckedCategories, setUncheckedCategories] = useState([]);
 
-  // Khôi phục phiên
+  // Khôi phục phiên đăng nhập
   useEffect(() => {
     const savedUser = sessionStorage.getItem('stc_current_user');
     if (savedUser) setCurrentUser(JSON.parse(savedUser));
   }, []);
 
-  const handleLogin = (e) => {
+  // --- LOGIC ĐĂNG NHẬP MỚI (KIỂM TRA CSDL TRƯỚC) ---
+  const handleLogin = async (e) => {
     e.preventDefault();
-    const userAccount = ACCOUNTS[usernameInput.toLowerCase().trim()];
-    if (userAccount && userAccount.password === passwordInput) {
-      const userSession = { username: usernameInput.toLowerCase().trim(), role: userAccount.role, displayName: userAccount.displayName };
+    const uid = usernameInput.toLowerCase().trim();
+    const userAcc = ACCOUNTS[uid];
+    
+    if (!userAcc) {
+      alert('Tên đăng nhập không tồn tại!');
+      return;
+    }
+
+    let activePassword = userAcc.defaultPassword;
+
+    // Kiểm tra xem user đã từng đổi pass trên Supabase chưa
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.from('app_users').select('password').eq('username', uid).single();
+        if (data && data.password) {
+          activePassword = data.password; // Lấy pass mới ghi đè pass mặc định
+        }
+      } catch (err) {
+        console.error("Lỗi khi kiểm tra mật khẩu", err);
+      }
+    }
+
+    if (passwordInput === activePassword) {
+      const userSession = { username: uid, role: userAcc.role, displayName: userAcc.displayName };
       setCurrentUser(userSession);
       sessionStorage.setItem('stc_current_user', JSON.stringify(userSession));
     } else {
-      alert('Tên đăng nhập hoặc mật khẩu không chính xác!');
+      alert('Mật khẩu không chính xác!');
       setPasswordInput('');
     }
   };
@@ -247,6 +269,52 @@ export default function App() {
     );
   };
 
+  // --- CỬA SỔ ĐỔI MẬT KHẨU ---
+  const ChangePasswordModal = () => {
+    const [oldPass, setOldPass] = useState('');
+    const [newPass, setNewPass] = useState('');
+    const [confirmPass, setConfirmPass] = useState('');
+
+    const handleChangePass = async () => {
+      if (!oldPass || !newPass || !confirmPass) return alert('Vui lòng điền đủ thông tin!');
+      if (newPass !== confirmPass) return alert('Mật khẩu mới không khớp nhau!');
+      if (!supabase) return alert('Không có kết nối CSDL, không thể đổi mật khẩu!');
+
+      // 1. Kiểm tra mật khẩu cũ
+      let currentActivePass = ACCOUNTS[currentUser.username].defaultPassword;
+      const { data } = await supabase.from('app_users').select('password').eq('username', currentUser.username).single();
+      if (data && data.password) currentActivePass = data.password;
+
+      if (oldPass !== currentActivePass) {
+        return alert('Mật khẩu cũ không chính xác!');
+      }
+
+      // 2. Lưu mật khẩu mới lên Supabase
+      const { error } = await supabase.from('app_users').upsert({ username: currentUser.username, password: newPass });
+      if (error) {
+        alert('Có lỗi xảy ra: ' + error.message);
+      } else {
+        alert('Đổi mật khẩu thành công! Vui lòng đăng nhập lại.');
+        setShowChangePassModal(false);
+        handleLogout();
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-xl max-w-sm w-full p-6 shadow-xl">
+          <div className="flex justify-between items-center mb-6"><h3 className="text-xl font-bold">Đổi Mật Khẩu</h3><button onClick={() => setShowChangePassModal(false)}><X className="text-gray-500 w-6 h-6" /></button></div>
+          <div className="space-y-4">
+            <div><label className="block text-sm font-bold mb-2">Mật khẩu cũ</label><input type="password" value={oldPass} onChange={(e) => setOldPass(e.target.value)} className="w-full p-3 border-2 rounded-lg" /></div>
+            <div><label className="block text-sm font-bold mb-2">Mật khẩu mới</label><input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} className="w-full p-3 border-2 rounded-lg" /></div>
+            <div><label className="block text-sm font-bold mb-2">Nhập lại mật khẩu mới</label><input type="password" value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)} className="w-full p-3 border-2 rounded-lg" /></div>
+          </div>
+          <div className="mt-6 flex justify-end gap-3"><button onClick={() => setShowChangePassModal(false)} className="px-4 py-2 bg-gray-200 font-bold rounded-lg">Hủy</button><button onClick={handleChangePass} className="px-4 py-2 bg-blue-600 text-white font-bold rounded-lg">Cập nhật</button></div>
+        </div>
+      </div>
+    );
+  };
+
   const TransactionModal = () => {
     const [txType, setTxType] = useState('expense');
     const [amountStr, setAmountStr] = useState('');
@@ -361,7 +429,6 @@ export default function App() {
       `}</style>
       <div className="no-print min-h-screen bg-gray-50 text-gray-900 font-sans">
         
-        {/* HEADER GỌN HƠN TRÊN MOBILE */}
         <header className="bg-blue-700 text-white p-3 md:p-4 shadow-md">
           <div className="max-w-6xl mx-auto flex justify-between items-center">
             <h1 className="text-xl md:text-3xl font-extrabold tracking-tight">SỔ THU CHI</h1>
@@ -370,6 +437,12 @@ export default function App() {
                 <User className="w-3 h-3 md:w-4 md:h-4 text-blue-300" />
                 <span className="font-bold text-xs md:text-sm text-blue-100 truncate max-w-[80px] md:max-w-full">{currentUser.displayName}</span>
               </div>
+              
+              {/* Nút Đổi Mật Khẩu */}
+              <button onClick={() => setShowChangePassModal(true)} className="flex items-center justify-center bg-blue-600 p-1.5 md:px-3 md:py-2 rounded-lg font-bold hover:bg-blue-500 text-xs md:text-sm" title="Đổi mật khẩu">
+                 <Key className="w-4 h-4 md:w-5 md:h-5" />
+              </button>
+
               <button onClick={() => setShowProjectModal(true)} className="flex items-center gap-1 md:gap-2 bg-blue-600 px-2 py-1.5 md:px-4 md:py-2 rounded-lg font-bold hover:bg-blue-500 text-xs md:text-sm"><BookOpen className="w-4 h-4 md:w-5 md:h-5" /> <span className="hidden md:inline">Sổ Của Tôi</span></button>
               <button onClick={handleLogout} className="flex items-center justify-center bg-red-600 p-1.5 md:px-4 md:py-2 rounded-lg font-bold hover:bg-red-500" title="Đăng xuất"><Lock className="w-4 h-4 md:w-5 md:h-5" /></button>
             </div>
@@ -381,7 +454,6 @@ export default function App() {
             <div className="text-center py-20"><h2 className="text-lg md:text-2xl font-bold text-gray-600 mb-6">Bạn chưa chọn hoặc chưa có Sổ Thu Chi nào.</h2><button onClick={() => handleAddProject(prompt('Nhập tên sổ:'))} className="px-6 py-3 md:px-8 md:py-4 bg-blue-600 text-white font-bold text-base md:text-xl rounded-xl shadow-md">+ Tạo Sổ Mới</button></div>
           ) : (
             <>
-              {/* THANH ĐIỀU KHIỂN TOP */}
               <div className="flex flex-col md:flex-row justify-between items-center gap-3 md:gap-4 mb-4 md:mb-8 bg-white p-3 md:p-4 rounded-xl shadow-sm border">
                 <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto">
                   <span className="font-bold text-sm md:text-base whitespace-nowrap">Sổ hiện tại:</span>
@@ -394,37 +466,17 @@ export default function App() {
                 </div>
               </div>
               
-              {/* MENU TABS */}
               <div className="flex gap-1 md:gap-2 mb-4 md:mb-6 bg-white p-1.5 md:p-2 rounded-xl border shadow-sm">
                 <button onClick={() => setActiveTab('dashboard')} className={`flex-1 py-2 md:py-3 text-xs md:text-base font-bold rounded-lg flex items-center justify-center gap-1 md:gap-2 ${activeTab === 'dashboard' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><PieChart className="w-4 h-4 md:w-5 md:h-5" /> THỐNG KÊ</button>
                 <button onClick={() => setActiveTab('list')} className={`flex-1 py-2 md:py-3 text-xs md:text-base font-bold rounded-lg flex items-center justify-center gap-1 md:gap-2 ${activeTab === 'list' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><List className="w-4 h-4 md:w-5 md:h-5" /> GIAO DỊCH</button>
                 <button onClick={() => setActiveTab('settings')} className={`flex-1 py-2 md:py-3 text-xs md:text-base font-bold rounded-lg flex items-center justify-center gap-1 md:gap-2 ${activeTab === 'settings' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><Settings className="w-4 h-4 md:w-5 md:h-5" /> CÀI ĐẶT</button>
               </div>
 
-              {/* TAB THỐNG KÊ */}
               {activeTab === 'dashboard' && (
                 <div className="space-y-4 md:space-y-6">
-                  
-                  {/* BỘ LỌC CẢI TIẾN: GỌN GÀNG VÀ CÓ THỂ THU GỌN */}
                   <div className="bg-white p-3 md:p-4 rounded-xl border shadow-sm">
-                    <button 
-                      onClick={() => setShowFilter(!showFilter)} 
-                      className="w-full flex justify-between items-center text-left text-sm md:text-base font-bold text-gray-700 pb-1"
-                    >
-                      <span className="flex items-center gap-2"><Filter className="w-4 h-4" /> Lọc hiển thị theo Danh mục</span>
-                      {showFilter ? <ChevronUp className="w-5 h-5 text-gray-500" /> : <ChevronDown className="w-5 h-5 text-gray-500" />}
-                    </button>
-                    
-                    {showFilter && (
-                      <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">
-                        {categories.map(cat => (
-                          <label key={cat.id} className="flex items-center gap-1.5 cursor-pointer px-2 py-1.5 md:p-2 bg-gray-50 rounded border hover:bg-gray-100 text-xs md:text-sm">
-                            <input type="checkbox" checked={!uncheckedCategories.includes(cat.name)} onChange={() => { setUncheckedCategories(prev => prev.includes(cat.name) ? prev.filter(c => c !== cat.name) : [...prev, cat.name]) }} className="w-4 h-4 md:w-5 md:h-5 accent-blue-600" />
-                            <span className={`font-bold ${cat.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>{cat.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                    <button onClick={() => setShowFilter(!showFilter)} className="w-full flex justify-between items-center text-left text-sm md:text-base font-bold text-gray-700 pb-1"><span className="flex items-center gap-2"><Filter className="w-4 h-4" /> Lọc hiển thị theo Danh mục</span>{showFilter ? <ChevronUp className="w-5 h-5 text-gray-500" /> : <ChevronDown className="w-5 h-5 text-gray-500" />}</button>
+                    {showFilter && (<div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">{categories.map(cat => (<label key={cat.id} className="flex items-center gap-1.5 cursor-pointer px-2 py-1.5 md:p-2 bg-gray-50 rounded border hover:bg-gray-100 text-xs md:text-sm"><input type="checkbox" checked={!uncheckedCategories.includes(cat.name)} onChange={() => { setUncheckedCategories(prev => prev.includes(cat.name) ? prev.filter(c => c !== cat.name) : [...prev, cat.name]) }} className="w-4 h-4 md:w-5 md:h-5 accent-blue-600" /><span className={`font-bold ${cat.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>{cat.name}</span></label>))}</div>)}
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-6">
@@ -434,14 +486,11 @@ export default function App() {
                   </div>
                   <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border">
                     <div className="flex justify-between items-center mb-4 md:mb-6"><h3 className="text-base md:text-xl font-bold">Biểu Đồ So Sánh</h3><select value={chartGroup} onChange={(e) => setChartGroup(e.target.value)} className="p-1.5 md:p-2 text-sm md:text-base border-2 rounded-lg font-bold"><option value="day">Ngày</option><option value="month">Tháng</option><option value="year">Năm</option></select></div>
-                    <div className="h-64 md:h-80">
-                      <ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" tick={{fontSize: 12}} /><YAxis tick={{fontSize: 12}} tickFormatter={(v) => v===0?'0':`${v/1000}k`} /><Tooltip formatter={(v) => formatCurrency(v)+' đ'} /><Legend wrapperStyle={{fontSize: "12px"}} /><Bar dataKey="income" name="Thu" fill="#16a34a" /><Bar dataKey="expense" name="Chi" fill="#dc2626" /></BarChart></ResponsiveContainer>
-                    </div>
+                    <div className="h-64 md:h-80"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" tick={{fontSize: 12}} /><YAxis tick={{fontSize: 12}} tickFormatter={(v) => v===0?'0':`${v/1000}k`} /><Tooltip formatter={(v) => formatCurrency(v)+' đ'} /><Legend wrapperStyle={{fontSize: "12px"}} /><Bar dataKey="income" name="Thu" fill="#16a34a" /><Bar dataKey="expense" name="Chi" fill="#dc2626" /></BarChart></ResponsiveContainer></div>
                   </div>
                 </div>
               )}
 
-              {/* TAB DANH SÁCH GIAO DỊCH */}
               {activeTab === 'list' && (
                 <div className="bg-white rounded-xl shadow-sm border overflow-x-auto">
                   <table className="w-full text-left min-w-[600px]">
@@ -462,7 +511,6 @@ export default function App() {
                 </div>
               )}
               
-              {/* TAB CÀI ĐẶT */}
               {activeTab === 'settings' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                   <div className="bg-white p-4 md:p-6 rounded-xl border shadow-sm">
@@ -481,17 +529,17 @@ export default function App() {
           )}
         </main>
 
-        {/* MODAL QUẢN LÝ SỔ */}
+        {/* MODALS */}
         {showProjectModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl max-w-lg w-full p-4 md:p-6 shadow-xl"><div className="flex justify-between items-center mb-4 md:mb-6"><h3 className="text-xl md:text-2xl font-bold">Quản Lý Sổ</h3><button onClick={() => setShowProjectModal(false)}><X className="text-gray-500 w-6 h-6 md:w-8 md:h-8" /></button></div><div className="space-y-3 mb-6 max-h-80 overflow-y-auto">{projects.map(p => (<div key={p.id} className="flex justify-between items-center p-3 md:p-4 border rounded-lg bg-gray-50"><span className="font-bold text-sm md:text-lg">{p.name}</span><button onClick={() => handleDeleteProject(p.id)} className="text-red-500 p-2 hover:bg-red-100 rounded-lg"><Trash2 className="w-4 h-4 md:w-5 md:h-5" /></button></div>))}</div><button onClick={() => handleAddProject(prompt('Tên sổ mới:'))} className="w-full py-2.5 md:py-3 text-sm md:text-base bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">+ Tạo Sổ Mới</button></div>
           </div>
         )}
         
+        {showChangePassModal && <ChangePasswordModal />}
         {showTxModal && <TransactionModal />}
         {showTemplateModal && <CreateTemplateModal />}
 
-        {/* MODAL IN PHIẾU */}
         {transactionToPrint && (
           <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-2 md:p-4 z-[60]">
             <div className="bg-gray-200 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] w-[160mm]">
