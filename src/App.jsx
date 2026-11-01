@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key, Download } from 'lucide-react';
+import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key, Download, Edit, Search } from 'lucide-react';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
-// === HỆ THỐNG TÀI KHOẢN (Mật khẩu mặc định) ===
 const ACCOUNTS = {
   'quanly': { defaultPassword: 'quanly@11231', role: 'admin', displayName: 'Quản Lý' },
   'nhanvien1': { defaultPassword: 'msthuy1191#', role: 'staff', displayName: 'Ms. Thuỷ' },
@@ -19,60 +18,62 @@ export default function App() {
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
 
-  const [projects, setProjects] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [templates, setTemplates] = useState([]);
-  const [categories, setCategories] = useState([
-    { id: '1', name: 'Điện nước cửa hàng', type: 'expense' },
-    { id: '2', name: 'Nhập hàng & Mua hộ', type: 'expense' },
-    { id: '3', name: 'Trang thiết bị & Sửa chữa', type: 'expense' },
-    { id: '4', name: 'Vật liệu đóng gói', type: 'expense' },
-    { id: '5', name: 'Phí giao hàng & Taxi', type: 'expense' },
-    { id: '6', name: 'Lương quản lý (Mẹ)', type: 'expense' },
-    { id: '7', name: 'Bán hàng hàng ngày', type: 'income' },
-    { id: '8', name: 'Thu khác', type: 'income' }
-  ]);
+  const [projects, setProjects] = useState(() => JSON.parse(localStorage.getItem('stc_projects') || '[]'));
+  const [transactions, setTransactions] = useState(() => JSON.parse(localStorage.getItem('stc_transactions') || '[]'));
+  const [templates, setTemplates] = useState(() => JSON.parse(localStorage.getItem('stc_templates') || '[]'));
+  const [categories, setCategories] = useState(() => {
+    const localCat = localStorage.getItem('stc_categories');
+    return localCat ? JSON.parse(localCat) : [
+      { id: '1', name: 'Điện nước cửa hàng', type: 'expense' },
+      { id: '2', name: 'Nhập hàng & Mua hộ', type: 'expense' },
+      { id: '3', name: 'Trang thiết bị & Sửa chữa', type: 'expense' },
+      { id: '4', name: 'Vật liệu đóng gói', type: 'expense' },
+      { id: '5', name: 'Phí giao hàng & Taxi', type: 'expense' },
+      { id: '6', name: 'Lương quản lý (Mẹ)', type: 'expense' },
+      { id: '7', name: 'Bán hàng hàng ngày', type: 'income' },
+      { id: '8', name: 'Thu khác', type: 'income' }
+    ];
+  });
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   
   const [showTxModal, setShowTxModal] = useState(false);
+  const [editingTx, setEditingTx] = useState(null); // Giao dịch đang được sửa
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showChangePassModal, setShowChangePassModal] = useState(false); 
   const [transactionToPrint, setTransactionToPrint] = useState(null);
   const [showFilter, setShowFilter] = useState(false);
   
-  const [dateFilter, setDateFilter] = useState('all'); // 'all', 'today', 'month', 'year'
+  const [dateFilter, setDateFilter] = useState('all');
   const [chartGroup, setChartGroup] = useState('month');
   const [uncheckedCategories, setUncheckedCategories] = useState([]);
+  const [searchTerm, setSearchTerm] = useState(''); // Tìm kiếm
 
   useEffect(() => {
     const savedUser = sessionStorage.getItem('stc_current_user');
     if (savedUser) setCurrentUser(JSON.parse(savedUser));
   }, []);
 
+  useEffect(() => {
+    if (projects.length > 0 && !selectedProjectId) setSelectedProjectId(projects[0].id);
+  }, [projects]);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     const uid = usernameInput.toLowerCase().trim();
     const userAcc = ACCOUNTS[uid];
     
-    if (!userAcc) {
-      alert('Tên đăng nhập không tồn tại!');
-      return;
-    }
+    if (!userAcc) return alert('Tên đăng nhập không tồn tại!');
 
     let activePassword = userAcc.defaultPassword;
 
     if (supabase) {
       try {
         const { data } = await supabase.from('app_users').select('password').eq('username', uid).single();
-        if (data && data.password) {
-          activePassword = data.password;
-        }
-      } catch (err) {
-        console.error("Lỗi khi kiểm tra mật khẩu", err);
-      }
+        if (data && data.password) activePassword = data.password;
+      } catch (err) { console.error("Lỗi kiểm tra pass", err); }
     }
 
     if (passwordInput === activePassword) {
@@ -97,42 +98,20 @@ export default function App() {
   const fetchData = async () => {
     if (supabase) {
       try {
-        const [
-          { data: pData },
-          { data: tData },
-          { data: tmplData },
-          { data: catData }
-        ] = await Promise.all([
+        const [{ data: pData }, { data: tData }, { data: tmplData }, { data: catData }] = await Promise.all([
           supabase.from('projects').select('*'),
           supabase.from('transactions').select('*'),
           supabase.from('templates').select('*'),
           supabase.from('custom_categories').select('*')
         ]);
         
-        if (pData) setProjects(pData);
-        if (tData) setTransactions(tData);
-        if (tmplData) setTemplates(tmplData);
-        if (catData && catData.length > 0) setCategories(catData);
-      } catch (error) { loadLocal(); }
-    } else loadLocal();
-  };
-
-  const loadLocal = () => {
-    setProjects(JSON.parse(localStorage.getItem('stc_projects') || '[]'));
-    setTransactions(JSON.parse(localStorage.getItem('stc_transactions') || '[]'));
-    setTemplates(JSON.parse(localStorage.getItem('stc_templates') || '[]'));
-    const localCat = JSON.parse(localStorage.getItem('stc_categories'));
-    if (localCat) setCategories(localCat);
-  };
-
-  useEffect(() => {
-    if (!supabase && currentUser) {
-      localStorage.setItem('stc_projects', JSON.stringify(projects));
-      localStorage.setItem('stc_transactions', JSON.stringify(transactions));
-      localStorage.setItem('stc_templates', JSON.stringify(templates));
-      localStorage.setItem('stc_categories', JSON.stringify(categories));
+        if (pData) { setProjects(pData); localStorage.setItem('stc_projects', JSON.stringify(pData)); }
+        if (tData) { setTransactions(tData); localStorage.setItem('stc_transactions', JSON.stringify(tData)); }
+        if (tmplData) { setTemplates(tmplData); localStorage.setItem('stc_templates', JSON.stringify(tmplData)); }
+        if (catData && catData.length > 0) { setCategories(catData); localStorage.setItem('stc_categories', JSON.stringify(catData)); }
+      } catch (error) { console.error("Lỗi tải data", error); }
     }
-  }, [projects, transactions, templates, categories, currentUser]);
+  };
 
   const formatCurrency = (val) => {
     if (!val) return '';
@@ -143,6 +122,7 @@ export default function App() {
   const getNumber = (val) => parseInt(val?.toString().replace(/,/g, '')) || 0;
   const generateId = () => Math.random().toString(36).substr(2, 9);
 
+  // Bộ lọc ngày & Sổ
   const filteredTransactions = useMemo(() => {
     let filtered = transactions.filter(t => t.project_id === selectedProjectId);
     const today = new Date();
@@ -152,9 +132,22 @@ export default function App() {
     return filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
   }, [transactions, selectedProjectId, dateFilter]);
 
+  // Bộ lọc tìm kiếm Text
+  const displayTransactions = useMemo(() => {
+    if (!searchTerm.trim()) return filteredTransactions;
+    const lower = searchTerm.toLowerCase();
+    return filteredTransactions.filter(t => 
+      (t.description?.toLowerCase().includes(lower)) || 
+      (t.category?.toLowerCase().includes(lower)) ||
+      (t.created_by?.toLowerCase().includes(lower)) ||
+      (t.amount.toString().includes(lower))
+    );
+  }, [filteredTransactions, searchTerm]);
+
+  // Dashboard chỉ tính các danh mục không bị ẩn
   const activeTransactionsForDashboard = useMemo(() => {
-    return filteredTransactions.filter(t => !uncheckedCategories.includes(t.category));
-  }, [filteredTransactions, uncheckedCategories]);
+    return displayTransactions.filter(t => !uncheckedCategories.includes(t.category));
+  }, [displayTransactions, uncheckedCategories]);
 
   const summary = useMemo(() => activeTransactionsForDashboard.reduce((acc, curr) => {
     curr.type === 'income' ? acc.income += curr.amount : acc.expense += curr.amount;
@@ -183,60 +176,83 @@ export default function App() {
 
   const handleAddProject = async (name) => {
     const newP = { id: generateId(), name, created_at: new Date().toISOString() };
+    const updated = [...projects, newP];
+    setProjects(updated);
+    localStorage.setItem('stc_projects', JSON.stringify(updated));
     if (supabase) { await supabase.from('projects').insert([newP]); fetchData(); } 
-    else setProjects([...projects, newP]);
     if (!selectedProjectId) setSelectedProjectId(newP.id);
   };
 
   const handleDeleteProject = async (id) => {
     if (!checkAdmin()) return;
     if (window.confirm('Bạn có chắc chắn muốn xóa Sổ này?')) {
+      const updatedP = projects.filter(p => p.id !== id);
+      const updatedT = transactions.filter(t => t.project_id !== id);
+      setProjects(updatedP); setTransactions(updatedT);
+      localStorage.setItem('stc_projects', JSON.stringify(updatedP));
+      localStorage.setItem('stc_transactions', JSON.stringify(updatedT));
       if (supabase) { await supabase.from('projects').delete().eq('id', id); fetchData(); } 
-      else { setProjects(projects.filter(p => p.id !== id)); setTransactions(transactions.filter(t => t.project_id !== id)); }
       if (selectedProjectId === id) setSelectedProjectId(null);
+    }
+  };
+
+  // NHÂN VIÊN ĐƯỢC QUYỀN XOÁ GIAO DỊCH
+  const handleDeleteTransaction = async (id) => {
+    if (window.confirm('Bạn có chắc chắn muốn xóa giao dịch này?')) {
+      const updated = transactions.filter(tx => tx.id !== id);
+      setTransactions(updated);
+      localStorage.setItem('stc_transactions', JSON.stringify(updated));
+      if (supabase) { await supabase.from('transactions').delete().eq('id', id); fetchData(); }
     }
   };
 
   const handleAddCategory = async (name, type) => {
     const newC = { id: generateId(), name, type, created_at: new Date().toISOString() };
+    const updated = [...categories, newC];
+    setCategories(updated); localStorage.setItem('stc_categories', JSON.stringify(updated));
     if (supabase) { await supabase.from('custom_categories').insert([newC]); fetchData(); } 
-    else setCategories([...categories, newC]);
   };
 
   const handleDeleteCategory = async (id) => {
     if (!checkAdmin()) return;
-    if (window.confirm('Xóa danh mục này? Các giao dịch cũ vẫn sẽ giữ lại giá trị nhưng mất phân loại.')) {
+    if (window.confirm('Xóa danh mục này? Các giao dịch cũ vẫn giữ giá trị nhưng mất phân loại.')) {
+      const updated = categories.filter(c => c.id !== id);
+      setCategories(updated); localStorage.setItem('stc_categories', JSON.stringify(updated));
       if (supabase) { await supabase.from('custom_categories').delete().eq('id', id); fetchData(); } 
-      else setCategories(categories.filter(c => c.id !== id));
     }
   };
 
   const handleAddTemplate = async (tmpl) => {
     const newTmpl = { ...tmpl, id: generateId(), created_at: new Date().toISOString() };
+    const updated = [...templates, newTmpl];
+    setTemplates(updated); localStorage.setItem('stc_templates', JSON.stringify(updated));
     if (supabase) { await supabase.from('templates').insert([newTmpl]); fetchData(); } 
-    else setTemplates([...templates, newTmpl]);
   };
 
   const handleDeleteTemplate = async (id) => {
     if (!checkAdmin()) return;
+    const updated = templates.filter(t => t.id !== id);
+    setTemplates(updated); localStorage.setItem('stc_templates', JSON.stringify(updated));
     if (supabase) { await supabase.from('templates').delete().eq('id', id); fetchData(); } 
-    else setTemplates(templates.filter(t => t.id !== id));
   };
 
+  // XUẤT EXCEL (ĐÃ TÁCH CỘT THU - CHI)
   const exportToExcel = async () => {
-    if (filteredTransactions.length === 0) return alert('Không có dữ liệu để xuất!');
+    if (displayTransactions.length === 0) return alert('Không có dữ liệu để xuất!');
     const XLSX = await import('xlsx');
-    const excelData = filteredTransactions.map(t => ({
+    
+    const excelData = displayTransactions.map(t => ({
       'Ngày': t.date,
       'Giờ': new Date(t.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
       'Danh Mục': t.category,
       'Ghi Chú': t.description || '',
       'Người Nhập': t.created_by || 'Khuyết danh',
-      'Loại': t.type === 'income' ? 'Thu' : 'Chi',
-      'Số Tiền (VNĐ)': t.amount
+      'Tiền Thu (VNĐ)': t.type === 'income' ? t.amount : '',
+      'Tiền Chi (VNĐ)': t.type === 'expense' ? t.amount : ''
     }));
+
     const worksheet = XLSX.utils.json_to_sheet(excelData);
-    worksheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 25 }, { wch: 40 }, { wch: 15 }, { wch: 10 }, { wch: 15 }];
+    worksheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 25 }, { wch: 40 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Giao_Dich");
     XLSX.writeFile(workbook, `SoThuChi_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -247,7 +263,6 @@ export default function App() {
     const dateObj = new Date(t.created_at);
     const timeStr = dateObj.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     const dateStr = dateObj.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-
     return (
       <div className="w-full text-black font-serif bg-white p-4">
         <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-6">
@@ -283,23 +298,14 @@ export default function App() {
       if (!oldPass || !newPass || !confirmPass) return alert('Vui lòng điền đủ thông tin!');
       if (newPass !== confirmPass) return alert('Mật khẩu mới không khớp nhau!');
       if (!supabase) return alert('Không có kết nối CSDL, không thể đổi mật khẩu!');
-
       let currentActivePass = ACCOUNTS[currentUser.username].defaultPassword;
       const { data } = await supabase.from('app_users').select('password').eq('username', currentUser.username).single();
       if (data && data.password) currentActivePass = data.password;
-
-      if (oldPass !== currentActivePass) {
-        return alert('Mật khẩu cũ không chính xác!');
-      }
-
+      if (oldPass !== currentActivePass) return alert('Mật khẩu cũ không chính xác!');
+      
       const { error } = await supabase.from('app_users').upsert({ username: currentUser.username, password: newPass });
-      if (error) {
-        alert('Có lỗi xảy ra: ' + error.message);
-      } else {
-        alert('Đổi mật khẩu thành công! Vui lòng đăng nhập lại.');
-        setShowChangePassModal(false);
-        handleLogout();
-      }
+      if (error) alert('Có lỗi xảy ra: ' + error.message);
+      else { alert('Đổi mật khẩu thành công! Vui lòng đăng nhập lại.'); setShowChangePassModal(false); handleLogout(); }
     };
 
     return (
@@ -317,42 +323,53 @@ export default function App() {
     );
   };
 
-  const TransactionModal = () => {
-    const [txType, setTxType] = useState('expense');
-    const [amountStr, setAmountStr] = useState('');
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    const [category, setCategory] = useState(categories.filter(c => c.type === 'expense')[0]?.name || '');
-    const [desc, setDesc] = useState('');
+  // MODAL ĐÃ ĐƯỢC TÍCH HỢP TÍNH NĂNG "SỬA GIAO DỊCH" (EDIT)
+  const TransactionModal = ({ txToEdit, onClose }) => {
+    const [txType, setTxType] = useState(txToEdit ? txToEdit.type : 'expense');
+    const [amountStr, setAmountStr] = useState(txToEdit ? formatCurrency(txToEdit.amount) : '');
+    const [date, setDate] = useState(txToEdit ? txToEdit.date : new Date().toISOString().split('T')[0]);
+    const [category, setCategory] = useState(txToEdit ? txToEdit.category : categories.filter(c => c.type === 'expense')[0]?.name || '');
+    const [desc, setDesc] = useState(txToEdit ? (txToEdit.description || '') : '');
 
     const applyTemplate = (tmpl) => {
-      setTxType(tmpl.type);
-      setAmountStr(formatCurrency(tmpl.amount));
-      setCategory(tmpl.category);
-      setDesc(tmpl.description || '');
+      setTxType(tmpl.type); setAmountStr(formatCurrency(tmpl.amount)); setCategory(tmpl.category); setDesc(tmpl.description || '');
     };
 
     const handleSave = async () => {
       const amount = getNumber(amountStr);
       if (!amount || amount <= 0) return alert('Vui lòng nhập số tiền hợp lệ');
-      const newTx = { id: generateId(), project_id: selectedProjectId, type: txType, amount, date, category, description: desc, created_at: new Date().toISOString(), created_by: currentUser.displayName };
-      if (supabase) { await supabase.from('transactions').insert([newTx]); fetchData(); } 
-      else setTransactions([...transactions, newTx]);
-      setShowTxModal(false);
+      
+      if (txToEdit) {
+        // CẬP NHẬT GIAO DỊCH CŨ
+        const updatedTx = { ...txToEdit, type: txType, amount, date, category, description: desc };
+        const updatedList = transactions.map(t => t.id === txToEdit.id ? updatedTx : t);
+        setTransactions(updatedList);
+        localStorage.setItem('stc_transactions', JSON.stringify(updatedList));
+        if (supabase) { await supabase.from('transactions').update({ type: txType, amount, date, category, description: desc }).eq('id', txToEdit.id); fetchData(); }
+      } else {
+        // THÊM GIAO DỊCH MỚI
+        const newTx = { id: generateId(), project_id: selectedProjectId, type: txType, amount, date, category, description: desc, created_at: new Date().toISOString(), created_by: currentUser.displayName };
+        const updatedList = [newTx, ...transactions];
+        setTransactions(updatedList);
+        localStorage.setItem('stc_transactions', JSON.stringify(updatedList));
+        if (supabase) { await supabase.from('transactions').insert([newTx]); fetchData(); } 
+      }
+      onClose();
     };
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-2 md:p-4 z-50">
         <div className="bg-white rounded-xl max-w-lg w-full p-4 md:p-6 shadow-xl max-h-[95vh] overflow-y-auto">
-          <div className="flex justify-between items-center mb-4 md:mb-6"><h3 className="text-xl md:text-2xl font-bold">Ghi Thu / Chi Mới</h3><button onClick={() => setShowTxModal(false)}><X className="text-gray-500 w-6 h-6 md:w-8 md:h-8" /></button></div>
-          {templates.length > 0 && (
+          <div className="flex justify-between items-center mb-4 md:mb-6"><h3 className="text-xl md:text-2xl font-bold">{txToEdit ? 'Sửa Giao Dịch' : 'Ghi Thu / Chi Mới'}</h3><button onClick={onClose}><X className="text-gray-500 w-6 h-6 md:w-8 md:h-8" /></button></div>
+          {!txToEdit && templates.length > 0 && (
             <div className="mb-4 md:mb-6 p-3 bg-blue-50 rounded-lg flex flex-wrap gap-2">
               <p className="text-xs md:text-sm font-semibold w-full text-blue-800">Chọn nhanh từ mẫu:</p>
               {templates.map(t => <button key={t.id} onClick={() => applyTemplate(t)} className="px-2 py-1 text-xs md:text-sm bg-white border rounded-md text-blue-700">{t.name}</button>)}
             </div>
           )}
           <div className="flex gap-2 mb-4 md:mb-6">
-            <button className={`flex-1 py-2 md:py-3 text-sm md:text-base font-bold rounded-lg ${txType === 'income' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('income'); setCategory(categories.find(c => c.type === 'income')?.name || ''); }}>+ KHOẢN THU</button>
-            <button className={`flex-1 py-2 md:py-3 text-sm md:text-base font-bold rounded-lg ${txType === 'expense' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('expense'); setCategory(categories.find(c => c.type === 'expense')?.name || ''); }}>- KHOẢN CHI</button>
+            <button className={`flex-1 py-2 md:py-3 text-sm md:text-base font-bold rounded-lg ${txType === 'income' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('income'); setCategory(categories.find(c => c.type === 'income')?.name || ''); }}>KHOẢN THU</button>
+            <button className={`flex-1 py-2 md:py-3 text-sm md:text-base font-bold rounded-lg ${txType === 'expense' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('expense'); setCategory(categories.find(c => c.type === 'expense')?.name || ''); }}>KHOẢN CHI</button>
           </div>
           <div className="space-y-3 md:space-y-4">
             <div><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Số Tiền (VNĐ) *</label><input type="text" value={amountStr} onChange={(e) => setAmountStr(formatCurrency(e.target.value))} className="w-full text-xl md:text-2xl p-2 md:p-3 border-2 rounded-lg" placeholder="1,000,000" /></div>
@@ -362,7 +379,7 @@ export default function App() {
             </div>
             <div><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Ghi Chú</label><input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} className="w-full p-2 md:p-3 text-sm md:text-base border-2 rounded-lg" /></div>
           </div>
-          <div className="mt-6 md:mt-8 flex justify-end gap-3 md:gap-4"><button onClick={() => setShowTxModal(false)} className="px-4 py-2 md:px-6 md:py-3 text-sm md:text-base bg-gray-200 font-bold rounded-lg">Hủy</button><button onClick={handleSave} className="px-4 py-2 md:px-6 md:py-3 text-sm md:text-base bg-blue-600 text-white font-bold rounded-lg">Lưu</button></div>
+          <div className="mt-6 md:mt-8 flex justify-end gap-3 md:gap-4"><button onClick={onClose} className="px-4 py-2 md:px-6 md:py-3 text-sm md:text-base bg-gray-200 font-bold rounded-lg">Hủy</button><button onClick={handleSave} className="px-4 py-2 md:px-6 md:py-3 text-sm md:text-base bg-blue-600 text-white font-bold rounded-lg">{txToEdit ? 'Cập Nhật' : 'Lưu'}</button></div>
         </div>
       </div>
     );
@@ -451,7 +468,6 @@ export default function App() {
             <div className="text-center py-20"><h2 className="text-lg md:text-2xl font-bold text-gray-600 mb-6">Bạn chưa chọn hoặc chưa có Sổ Thu Chi nào.</h2><button onClick={() => handleAddProject(prompt('Nhập tên sổ:'))} className="px-6 py-3 md:px-8 md:py-4 bg-blue-600 text-white font-bold text-base md:text-xl rounded-xl shadow-md">+ Tạo Sổ Mới</button></div>
           ) : (
             <>
-              {/* THANH ĐIỀU KHIỂN & NÚT GHI THU/CHI TO NỔI BẬT */}
               <div className="flex flex-col gap-3 mb-4 md:mb-6 bg-white p-3 md:p-4 rounded-xl shadow-sm border">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 w-full">
@@ -460,9 +476,8 @@ export default function App() {
                   </div>
                 </div>
                 
-                {/* Nút Ghi Thu / Chi làm tràn viền nổi bật nhất */}
                 <button onClick={() => setShowTxModal(true)} className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-3.5 md:py-4 rounded-xl font-extrabold text-lg md:text-xl hover:bg-blue-700 shadow-lg transition active:scale-[0.99]">
-                  <Plus className="w-7 h-7 stroke-[3]" /> GHI THU / CHI NAY
+                  <Plus className="w-7 h-7 stroke-[3]" /> GHI THU / CHI NGAY
                 </button>
               </div>
               
@@ -474,8 +489,6 @@ export default function App() {
 
               {activeTab === 'dashboard' && (
                 <div className="space-y-4 md:space-y-6">
-                  
-                  {/* BỘ LỌC THỜI GIAN 4 NÚT BẤM TRẢI NGANG TRƯỚC BIỂU ĐỒ */}
                   <div className="bg-white p-3 rounded-xl border shadow-sm">
                     <p className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Khoảng thời gian thống kê:</p>
                     <div className="grid grid-cols-4 gap-1.5">
@@ -506,26 +519,38 @@ export default function App() {
 
               {activeTab === 'list' && (
                 <div className="space-y-4">
-                  {/* NÚT XUẤT EXCEL ĐƯỢC ĐẶT NGAY DƯỚI/TRÊN BẢNG BIỂU CHO DỄ THẤY */}
-                  <div className="flex justify-between items-center bg-white p-3 rounded-xl border shadow-sm">
-                    <span className="text-sm font-bold text-gray-700">Danh sách giao dịch chi tiết ({filteredTransactions.length})</span>
-                    <button onClick={exportToExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow">
-                      <Download className="w-4 h-4" /> Xuất Excel
-                    </button>
+                  {/* THANH TÌM KIẾM MỚI VÀ XUẤT EXCEL */}
+                  <div className="flex flex-col md:flex-row justify-between items-center bg-white p-3 rounded-xl border shadow-sm gap-3">
+                    <span className="text-sm font-bold text-gray-700 w-full md:w-auto">Danh sách giao dịch ({displayTransactions.length})</span>
+                    <div className="flex gap-2 w-full md:w-auto">
+                      <div className="relative flex-1 md:w-64">
+                        <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                        <input type="text" placeholder="Tìm kiếm giao dịch..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm bg-gray-50 focus:bg-white" />
+                      </div>
+                      <button onClick={exportToExcel} className="flex items-center gap-1 bg-green-600 text-white px-3 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow whitespace-nowrap">
+                        <Download className="w-4 h-4" /> Xuất Excel
+                      </button>
+                    </div>
                   </div>
 
                   <div className="bg-white rounded-xl shadow-sm border overflow-x-auto">
-                    <table className="w-full text-left min-w-[600px]">
-                      <thead className="bg-gray-100 border-b"><tr><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Ngày</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Nội dung</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Người nhập</th><th className="p-3 md:p-4 text-xs md:text-sm text-right font-bold text-gray-600">Số Tiền</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">In</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">Xóa</th></tr></thead>
+                    <table className="w-full text-left min-w-[700px]">
+                      <thead className="bg-gray-100 border-b"><tr><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Ngày</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Nội dung</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Người nhập</th><th className="p-3 md:p-4 text-xs md:text-sm text-right font-bold text-gray-600">Số Tiền</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">Sửa</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">In</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">Xóa</th></tr></thead>
                       <tbody>
-                        {filteredTransactions.map(t => (
+                        {displayTransactions.map(t => (
                           <tr key={t.id} className="border-b hover:bg-gray-50 text-sm">
                             <td className="p-3 md:p-4 text-gray-700 whitespace-nowrap">{t.date}</td>
                             <td className="p-3 md:p-4"><p className="font-semibold text-gray-800">{t.category}</p><p className="text-xs text-gray-500">{t.description}</p></td>
                             <td className="p-3 md:p-4"><span className="px-2 py-1 bg-gray-100 text-gray-600 text-[10px] md:text-xs font-bold rounded-md border">{t.created_by || 'Khuyết danh'}</span></td>
                             <td className={`p-3 md:p-4 text-right font-bold whitespace-nowrap ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}</td>
-                            <td className="p-3 md:p-4 text-center"><button onClick={() => setTransactionToPrint(t)} className="text-blue-500 hover:text-blue-700 mx-auto block p-1.5 md:p-2 rounded hover:bg-blue-50" title="In phiếu này"><Printer className="w-4 h-4 md:w-5 md:h-5" /></button></td>
-                            <td className="p-3 md:p-4 text-center">{currentUser.role === 'admin' ? (<button onClick={() => { if(window.confirm('Xóa?')) { supabase ? supabase.from('transactions').delete().eq('id', t.id).then(fetchData) : setTransactions(transactions.filter(tx => tx.id !== t.id)); } }} className="text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4 md:w-5 md:h-5 mx-auto" /></button>) : (<ShieldAlert className="w-4 h-4 mx-auto text-gray-300" title="Không quyền xóa" />)}</td>
+                            
+                            {/* NÚT SỬA MỚI */}
+                            <td className="p-3 md:p-4 text-center"><button onClick={() => setEditingTx(t)} className="text-blue-500 hover:text-blue-700 mx-auto block p-1.5 md:p-2 rounded hover:bg-blue-50" title="Sửa giao dịch này"><Edit className="w-4 h-4 md:w-5 md:h-5" /></button></td>
+                            
+                            <td className="p-3 md:p-4 text-center"><button onClick={() => setTransactionToPrint(t)} className="text-gray-500 hover:text-gray-800 mx-auto block p-1.5 md:p-2 rounded hover:bg-gray-200" title="In phiếu này"><Printer className="w-4 h-4 md:w-5 md:h-5" /></button></td>
+                            
+                            {/* NÚT XÓA: Giờ Nhân Viên đã có thể xóa thoải mái */}
+                            <td className="p-3 md:p-4 text-center"><button onClick={() => handleDeleteTransaction(t.id)} className="text-red-400 hover:text-red-600 mx-auto block p-1.5 md:p-2 rounded hover:bg-red-50" title="Xóa"><Trash2 className="w-4 h-4 md:w-5 md:h-5" /></button></td>
                           </tr>
                         ))}
                       </tbody>
@@ -559,7 +584,10 @@ export default function App() {
         )}
         
         {showChangePassModal && <ChangePasswordModal />}
-        {showTxModal && <TransactionModal />}
+        
+        {/* Render Modal Thêm/Sửa */}
+        { (showTxModal || editingTx) && <TransactionModal txToEdit={editingTx} onClose={() => { setShowTxModal(false); setEditingTx(null); }} /> }
+        
         {showTemplateModal && <CreateTemplateModal />}
 
         {transactionToPrint && (
