@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key, Download, Edit, Search, Upload } from 'lucide-react';
+import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key, Download, Edit, Search, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -43,14 +43,21 @@ export default function App() {
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showChangePassModal, setShowChangePassModal] = useState(false); 
+  const [showExportModal, setShowExportModal] = useState(false); // Modal xuất Excel
+  
   const [transactionToPrint, setTransactionToPrint] = useState(null);
   const [showFilter, setShowFilter] = useState(false);
-  const [isImporting, setIsImporting] = useState(false); // Trạng thái loading khi up file
+  const [isImporting, setIsImporting] = useState(false);
   
   const [dateFilter, setDateFilter] = useState('all');
   const [chartGroup, setChartGroup] = useState('month');
   const [uncheckedCategories, setUncheckedCategories] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Trạng thái phân trang
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 30;
+  const MAX_DISPLAY_ITEMS = 300;
 
   useEffect(() => {
     const savedUser = sessionStorage.getItem('stc_current_user');
@@ -60,6 +67,11 @@ export default function App() {
   useEffect(() => {
     if (projects.length > 0 && !selectedProjectId) setSelectedProjectId(projects[0].id);
   }, [projects]);
+
+  // Đặt lại trang 1 nếu đổi bộ lọc hoặc tìm kiếm
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [dateFilter, searchTerm, selectedProjectId]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -87,17 +99,35 @@ export default function App() {
 
   useEffect(() => { if (currentUser) fetchData(); }, [currentUser]);
 
+  // Kéo toàn bộ data bằng Loop để Chart/Thống kê đầy đủ
   const fetchData = async () => {
     if (supabase) {
       try {
-        const [{ data: pData }, { data: tData }, { data: tmplData }, { data: catData }] = await Promise.all([
+        const [{ data: pData }, { data: tmplData }, { data: catData }] = await Promise.all([
           supabase.from('projects').select('*'),
-          supabase.from('transactions').select('*'),
           supabase.from('templates').select('*'),
           supabase.from('custom_categories').select('*')
         ]);
+        
+        let allTx = [];
+        let from = 0;
+        const step = 1000; 
+        let fetchMore = true;
+
+        while (fetchMore) {
+          const { data: tData, error } = await supabase.from('transactions').select('*').range(from, from + step - 1).order('date', { ascending: false });
+          if (error) break;
+          if (tData && tData.length > 0) {
+            allTx = [...allTx, ...tData];
+            from += step;
+            if (tData.length < step) fetchMore = false;
+          } else {
+            fetchMore = false; 
+          }
+        }
+        
         if (pData) { setProjects(pData); localStorage.setItem('stc_projects', JSON.stringify(pData)); }
-        if (tData) { setTransactions(tData); localStorage.setItem('stc_transactions', JSON.stringify(tData)); }
+        if (allTx.length > 0) { setTransactions(allTx); localStorage.setItem('stc_transactions', JSON.stringify(allTx)); }
         if (tmplData) { setTemplates(tmplData); localStorage.setItem('stc_templates', JSON.stringify(tmplData)); }
         if (catData && catData.length > 0) { setCategories(catData); localStorage.setItem('stc_categories', JSON.stringify(catData)); }
       } catch (error) { console.error("Lỗi tải data", error); }
@@ -110,34 +140,37 @@ export default function App() {
     return isNaN(num) ? '' : num.toLocaleString('en-US');
   };
 
-  const getNumber = (val) => {
-    if (val === undefined || val === null) return 0;
-    return parseInt(val.toString().replace(/,/g, '')) || 0;
-  };
-  
-  // Hàm tạo ID chống trùng lặp tuyệt đối khi nhập hàng nghìn dòng
+  const getNumber = (val) => parseInt(val?.toString().replace(/,/g, '')) || 0;
   const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 
+  // Lọc và Sắp xếp: Ưu tiên ngày Giao dịch > Ngày tạo (Mới nhất lên đầu)
   const filteredTransactions = useMemo(() => {
     let filtered = transactions.filter(t => t.project_id === selectedProjectId);
     const today = new Date();
     if (dateFilter === 'today') filtered = filtered.filter(t => t.date === today.toISOString().split('T')[0]);
     else if (dateFilter === 'month') filtered = filtered.filter(t => t.date.startsWith(today.toISOString().slice(0, 7)));
     else if (dateFilter === 'year') filtered = filtered.filter(t => t.date.startsWith(today.toISOString().slice(0, 4)));
-    return filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+    
+    return filtered.sort((a, b) => {
+      const dateDiff = new Date(b.date) - new Date(a.date);
+      if (dateDiff !== 0) return dateDiff;
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
   }, [transactions, selectedProjectId, dateFilter]);
 
+  // Khắc phục lỗi tìm kiếm Ghi chú (Kiểm tra null)
   const displayTransactions = useMemo(() => {
     if (!searchTerm.trim()) return filteredTransactions;
     const lower = searchTerm.toLowerCase();
     return filteredTransactions.filter(t => 
-      (t.description?.toLowerCase().includes(lower)) || 
-      (t.category?.toLowerCase().includes(lower)) ||
-      (t.created_by?.toLowerCase().includes(lower)) ||
+      ((t.description || '').toLowerCase().includes(lower)) || 
+      ((t.category || '').toLowerCase().includes(lower)) ||
+      ((t.created_by || '').toLowerCase().includes(lower)) ||
       (t.amount.toString().includes(lower))
     );
   }, [filteredTransactions, searchTerm]);
 
+  // Dashboard chỉ tính các danh mục không bị ẩn
   const activeTransactionsForDashboard = useMemo(() => {
     return displayTransactions.filter(t => !uncheckedCategories.includes(t.category));
   }, [displayTransactions, uncheckedCategories]);
@@ -159,15 +192,25 @@ export default function App() {
     return Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name));
   }, [activeTransactionsForDashboard, chartGroup]);
 
+  // === LOGIC PHÂN TRANG (Tối đa 300 kết quả, 30 items/trang) ===
+  const paginatedData = useMemo(() => {
+    const limitedData = displayTransactions.slice(0, MAX_DISPLAY_ITEMS);
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    return {
+      items: limitedData.slice(startIndex, startIndex + ITEMS_PER_PAGE),
+      totalPages: Math.ceil(limitedData.length / ITEMS_PER_PAGE),
+      totalLimited: limitedData.length,
+      isCapped: displayTransactions.length > MAX_DISPLAY_ITEMS
+    };
+  }, [displayTransactions, currentPage]);
+
   const checkAdmin = () => {
-    if (currentUser?.role !== 'admin') {
-      alert('Chỉ tài khoản Quản Lý mới có quyền thực hiện thao tác này!');
-      return false;
-    }
+    if (currentUser?.role !== 'admin') { alert('Chỉ tài khoản Quản Lý mới có quyền thao tác này!'); return false; }
     return true;
   };
 
   const handleAddProject = async (name) => {
+    if(!name) return;
     const newP = { id: generateId(), name, created_at: new Date().toISOString() };
     const updated = [...projects, newP];
     setProjects(updated); localStorage.setItem('stc_projects', JSON.stringify(updated));
@@ -189,7 +232,7 @@ export default function App() {
   };
 
   const handleDeleteTransaction = async (id) => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa giao dịch này?')) {
+    if (window.confirm('Xóa giao dịch này?')) {
       const updated = transactions.filter(tx => tx.id !== id);
       setTransactions(updated); localStorage.setItem('stc_transactions', JSON.stringify(updated));
       if (supabase) { await supabase.from('transactions').delete().eq('id', id); fetchData(); }
@@ -197,6 +240,7 @@ export default function App() {
   };
 
   const handleAddCategory = async (name, type) => {
+    if(!name) return;
     const newC = { id: generateId(), name, type, created_at: new Date().toISOString() };
     const updated = [...categories, newC];
     setCategories(updated); localStorage.setItem('stc_categories', JSON.stringify(updated));
@@ -226,32 +270,12 @@ export default function App() {
     if (supabase) { await supabase.from('templates').delete().eq('id', id); fetchData(); } 
   };
 
-  const exportToExcel = async () => {
-    if (displayTransactions.length === 0) return alert('Không có dữ liệu để xuất!');
-    const XLSX = await import('xlsx');
-    const excelData = displayTransactions.map(t => ({
-      'Ngày': t.date,
-      'Giờ': new Date(t.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-      'Danh Mục': t.category,
-      'Ghi Chú': t.description || '',
-      'Người Nhập': t.created_by || 'Khuyết danh',
-      'Tiền Thu (VNĐ)': t.type === 'income' ? t.amount : '',
-      'Tiền Chi (VNĐ)': t.type === 'expense' ? t.amount : ''
-    }));
-    const worksheet = XLSX.utils.json_to_sheet(excelData);
-    worksheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 25 }, { wch: 40 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Giao_Dich");
-    XLSX.writeFile(workbook, `SoThuChi_${new Date().toISOString().slice(0,10)}.xlsx`);
-  };
-
-  // === TÍNH NĂNG NHẬP EXCEL MỚI ===
   const handleImportExcel = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     if (!checkAdmin()) { e.target.value = null; return; }
-    if (!selectedProjectId) { alert('Vui lòng chọn một Sổ trước khi nhập dữ liệu!'); e.target.value = null; return; }
-    if (!window.confirm(`Bạn sắp nhập hàng loạt dữ liệu từ file "${file.name}" vào sổ hiện tại. Bạn có chắc chắn?`)) { e.target.value = null; return; }
+    if (!selectedProjectId) { alert('Vui lòng chọn một Sổ!'); e.target.value = null; return; }
+    if (!window.confirm(`Nhập hàng loạt từ "${file.name}" vào sổ hiện tại?`)) { e.target.value = null; return; }
     
     setIsImporting(true);
     try {
@@ -261,8 +285,7 @@ export default function App() {
       reader.onload = async (evt) => {
         const bstr = evt.target.result;
         const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
+        const ws = wb.Sheets[wb.SheetNames[0]];
         const data = XLSX.utils.sheet_to_json(ws);
         
         let newTransactions = [];
@@ -271,9 +294,7 @@ export default function App() {
         data.forEach(row => {
           let thu = getNumber(row['Tiền Thu (VNĐ)']);
           let chi = getNumber(row['Tiền Chi (VNĐ)']);
-          let amount = 0;
-          let type = 'expense';
-          
+          let amount = 0, type = 'expense';
           if (thu > 0) { amount = thu; type = 'income'; }
           else if (chi > 0) { amount = chi; type = 'expense'; }
           else return; 
@@ -281,13 +302,9 @@ export default function App() {
           let txDate = new Date().toISOString().split('T')[0];
           if (row['Ngày']) {
             if (row['Ngày'] instanceof Date) {
-              const y = row['Ngày'].getFullYear();
-              const m = String(row['Ngày'].getMonth() + 1).padStart(2, '0');
-              const d = String(row['Ngày'].getDate()).padStart(2, '0');
+              const y = row['Ngày'].getFullYear(), m = String(row['Ngày'].getMonth() + 1).padStart(2, '0'), d = String(row['Ngày'].getDate()).padStart(2, '0');
               txDate = `${y}-${m}-${d}`;
-            } else if (typeof row['Ngày'] === 'string') {
-               txDate = row['Ngày'].substring(0, 10);
-            }
+            } else if (typeof row['Ngày'] === 'string') { txDate = row['Ngày'].substring(0, 10); }
           }
           
           const catName = row['Danh Mục'] ? row['Danh Mục'].toString().trim() : 'Khác';
@@ -298,63 +315,144 @@ export default function App() {
           }
 
           newTransactions.push({
-            id: generateId(),
-            project_id: selectedProjectId,
-            type: type,
-            amount: amount,
-            date: txDate,
-            category: catName,
+            id: generateId(), project_id: selectedProjectId, type: type, amount: amount, date: txDate, category: catName,
             description: row['Ghi Chú'] ? row['Ghi Chú'].toString() : '',
             created_by: row['Người Nhập'] ? row['Người Nhập'].toString() : currentUser.displayName,
-            created_at: new Date().toISOString() // Dùng giờ hiện tại vì data cũ thường mất mốc giờ cụ thể
+            created_at: new Date().toISOString() 
           });
         });
         
-        if (newTransactions.length === 0) {
-           alert('Không tìm thấy dữ liệu hợp lệ trong file!');
-           setIsImporting(false); e.target.value = null; return;
-        }
-        
-        if (!window.confirm(`Tìm thấy ${newTransactions.length} giao dịch hợp lệ. Bấm OK để bắt đầu đẩy lên hệ thống. Vui lòng không tắt trang...`)) {
-           setIsImporting(false); e.target.value = null; return;
-        }
+        if (newTransactions.length === 0) { alert('Không có dữ liệu hợp lệ!'); setIsImporting(false); e.target.value = null; return; }
+        if (!window.confirm(`Tìm thấy ${newTransactions.length} giao dịch. Bắt đầu đẩy lên hệ thống?`)) { setIsImporting(false); e.target.value = null; return; }
 
-        // Tạo danh mục mới nếu có
         const newCatsArray = Array.from(newCatsMap.values());
         if (newCatsArray.length > 0) {
              if (supabase) await supabase.from('custom_categories').insert(newCatsArray);
              const updatedCats = [...categories, ...newCatsArray];
-             setCategories(updatedCats);
-             localStorage.setItem('stc_categories', JSON.stringify(updatedCats));
+             setCategories(updatedCats); localStorage.setItem('stc_categories', JSON.stringify(updatedCats));
         }
 
-        // Đẩy giao dịch lên Supabase chia nhỏ 500 dòng/lần tránh treo
         if (supabase) {
            const chunkSize = 500;
            for (let i = 0; i < newTransactions.length; i += chunkSize) {
                const chunk = newTransactions.slice(i, i + chunkSize);
                const { error } = await supabase.from('transactions').insert(chunk);
-               if (error) {
-                  console.error('Lỗi khi import chunk', error);
-                  alert('Có lỗi xảy ra khi đẩy dữ liệu: ' + error.message);
-                  setIsImporting(false); e.target.value = null; return;
-               }
+               if (error) { alert('Lỗi: ' + error.message); setIsImporting(false); e.target.value = null; return; }
            }
         }
         
         const updatedList = [...newTransactions, ...transactions];
-        setTransactions(updatedList);
-        localStorage.setItem('stc_transactions', JSON.stringify(updatedList));
+        setTransactions(updatedList); localStorage.setItem('stc_transactions', JSON.stringify(updatedList));
         
-        alert(`🎉 TUYỆT VỜI! Đã nhập thành công ${newTransactions.length} giao dịch vào sổ hiện tại.`);
+        alert(`🎉 Đã nhập ${newTransactions.length} giao dịch.`);
         setIsImporting(false); e.target.value = null; 
       };
       reader.readAsBinaryString(file);
-    } catch (err) {
-       console.error(err);
-       alert('Lỗi khi đọc file Excel!');
-       setIsImporting(false); e.target.value = null;
-    }
+    } catch (err) { alert('Lỗi đọc Excel!'); setIsImporting(false); e.target.value = null; }
+  };
+
+  // === CỬA SỔ XUẤT EXCEL THÔNG MINH ===
+  const ExportExcelModal = () => {
+    const [exportType, setExportType] = useState('filter'); // filter, range, specific
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+    const [specificType, setSpecificType] = useState('month'); // day, month, year
+    const [specificValue, setSpecificValue] = useState(new Date().toISOString().slice(0, 7)); // default YYYY-MM
+
+    const handleExecuteExport = async () => {
+      let dataToExport = [];
+      const projectTxs = transactions.filter(t => t.project_id === selectedProjectId);
+
+      if (exportType === 'filter') {
+        dataToExport = displayTransactions; // Dùng đúng dữ liệu đang lọc trên màn hình
+      } else if (exportType === 'range') {
+        if (!startDate || !endDate) return alert('Vui lòng chọn Ngày Bắt Đầu và Ngày Kết Thúc');
+        if (startDate > endDate) return alert('Ngày bắt đầu không được lớn hơn ngày kết thúc');
+        dataToExport = projectTxs.filter(t => t.date >= startDate && t.date <= endDate);
+      } else if (exportType === 'specific') {
+        if (!specificValue) return alert('Vui lòng nhập thời gian cụ thể');
+        dataToExport = projectTxs.filter(t => t.date.startsWith(specificValue));
+      }
+
+      if (dataToExport.length === 0) {
+        return alert('Không có dữ liệu giao dịch nào trong phạm vi bạn chọn!');
+      }
+
+      // Sắp xếp trước khi xuất
+      dataToExport.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      const XLSX = await import('xlsx');
+      const excelData = dataToExport.map(t => ({
+        'Ngày': t.date,
+        'Giờ': new Date(t.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+        'Danh Mục': t.category,
+        'Ghi Chú': t.description || '',
+        'Người Nhập': t.created_by || 'Khuyết danh',
+        'Tiền Thu (VNĐ)': t.type === 'income' ? t.amount : '',
+        'Tiền Chi (VNĐ)': t.type === 'expense' ? t.amount : ''
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(excelData);
+      worksheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 25 }, { wch: 40 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Giao_Dich");
+      
+      const fileName = `SoThuChi_${exportType === 'specific' ? specificValue : new Date().toISOString().slice(0,10)}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+      setShowExportModal(false);
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-xl max-w-md w-full p-5 shadow-xl">
+          <div className="flex justify-between items-center mb-5 border-b pb-3"><h3 className="text-xl font-bold flex items-center gap-2"><Download className="text-green-600" /> Tùy chọn Xuất Excel</h3><button onClick={() => setShowExportModal(false)}><X className="text-gray-500 w-6 h-6" /></button></div>
+          
+          <div className="space-y-4 mb-6">
+            <label className={`block p-3 border-2 rounded-lg cursor-pointer ${exportType === 'filter' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}>
+              <div className="flex items-center gap-3">
+                <input type="radio" name="expType" checked={exportType === 'filter'} onChange={() => setExportType('filter')} className="w-5 h-5 accent-blue-600" />
+                <span className="font-bold text-gray-800">1. Xuất theo bộ lọc hiện tại</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1 pl-8">Sẽ xuất {displayTransactions.length} giao dịch đang hiển thị ở bảng bên ngoài.</p>
+            </label>
+
+            <label className={`block p-3 border-2 rounded-lg cursor-pointer ${exportType === 'range' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}>
+              <div className="flex items-center gap-3">
+                <input type="radio" name="expType" checked={exportType === 'range'} onChange={() => setExportType('range')} className="w-5 h-5 accent-blue-600" />
+                <span className="font-bold text-gray-800">2. Xuất theo khoảng thời gian</span>
+              </div>
+              {exportType === 'range' && (
+                <div className="mt-3 pl-8 flex flex-col gap-2">
+                  <div className="flex items-center gap-2 text-sm"><span className="w-16">Từ ngày:</span> <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="border p-1.5 rounded flex-1" /></div>
+                  <div className="flex items-center gap-2 text-sm"><span className="w-16">Đến ngày:</span> <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="border p-1.5 rounded flex-1" /></div>
+                </div>
+              )}
+            </label>
+
+            <label className={`block p-3 border-2 rounded-lg cursor-pointer ${exportType === 'specific' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}>
+              <div className="flex items-center gap-3 mb-2">
+                <input type="radio" name="expType" checked={exportType === 'specific'} onChange={() => setExportType('specific')} className="w-5 h-5 accent-blue-600" />
+                <span className="font-bold text-gray-800">3. Xuất theo Ngày / Tháng / Năm</span>
+              </div>
+              {exportType === 'specific' && (
+                <div className="pl-8 flex flex-col gap-2">
+                  <select value={specificType} onChange={e => { setSpecificType(e.target.value); setSpecificValue(''); }} className="w-full border p-2 rounded text-sm">
+                    <option value="day">Theo Một Ngày Cụ Thể</option>
+                    <option value="month">Theo Cả Tháng</option>
+                    <option value="year">Theo Cả Năm</option>
+                  </select>
+                  {specificType === 'day' && <input type="date" value={specificValue} onChange={e => setSpecificValue(e.target.value)} className="w-full border p-2 rounded text-sm" />}
+                  {specificType === 'month' && <input type="month" value={specificValue} onChange={e => setSpecificValue(e.target.value)} className="w-full border p-2 rounded text-sm" />}
+                  {specificType === 'year' && <input type="number" placeholder="Nhập năm (VD: 2024)" value={specificValue} onChange={e => setSpecificValue(e.target.value)} className="w-full border p-2 rounded text-sm" min="2000" max="2100" />}
+                </div>
+              )}
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-3"><button onClick={() => setShowExportModal(false)} className="px-4 py-2 bg-gray-200 font-bold rounded-lg">Hủy</button><button onClick={handleExecuteExport} className="px-6 py-2 bg-green-600 text-white font-bold rounded-lg flex items-center gap-2"><Download className="w-4 h-4" /> Tải File Excel</button></div>
+        </div>
+      </div>
+    );
   };
 
   const ReceiptContent = ({ t }) => {
@@ -388,40 +486,6 @@ export default function App() {
     );
   };
 
-  const ChangePasswordModal = () => {
-    const [oldPass, setOldPass] = useState('');
-    const [newPass, setNewPass] = useState('');
-    const [confirmPass, setConfirmPass] = useState('');
-
-    const handleChangePass = async () => {
-      if (!oldPass || !newPass || !confirmPass) return alert('Vui lòng điền đủ thông tin!');
-      if (newPass !== confirmPass) return alert('Mật khẩu mới không khớp nhau!');
-      if (!supabase) return alert('Không có kết nối CSDL, không thể đổi mật khẩu!');
-      let currentActivePass = ACCOUNTS[currentUser.username].defaultPassword;
-      const { data } = await supabase.from('app_users').select('password').eq('username', currentUser.username).single();
-      if (data && data.password) currentActivePass = data.password;
-      if (oldPass !== currentActivePass) return alert('Mật khẩu cũ không chính xác!');
-      
-      const { error } = await supabase.from('app_users').upsert({ username: currentUser.username, password: newPass });
-      if (error) alert('Có lỗi xảy ra: ' + error.message);
-      else { alert('Đổi mật khẩu thành công! Vui lòng đăng nhập lại.'); setShowChangePassModal(false); handleLogout(); }
-    };
-
-    return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-xl max-w-sm w-full p-6 shadow-xl">
-          <div className="flex justify-between items-center mb-6"><h3 className="text-xl font-bold">Đổi Mật Khẩu</h3><button onClick={() => setShowChangePassModal(false)}><X className="text-gray-500 w-6 h-6" /></button></div>
-          <div className="space-y-4">
-            <div><label className="block text-sm font-bold mb-2">Mật khẩu cũ</label><input type="password" value={oldPass} onChange={(e) => setOldPass(e.target.value)} className="w-full p-3 border-2 rounded-lg" /></div>
-            <div><label className="block text-sm font-bold mb-2">Mật khẩu mới</label><input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} className="w-full p-3 border-2 rounded-lg" /></div>
-            <div><label className="block text-sm font-bold mb-2">Nhập lại mật khẩu mới</label><input type="password" value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)} className="w-full p-3 border-2 rounded-lg" /></div>
-          </div>
-          <div className="mt-6 flex justify-end gap-3"><button onClick={() => setShowChangePassModal(false)} className="px-4 py-2 bg-gray-200 font-bold rounded-lg">Hủy</button><button onClick={handleChangePass} className="px-4 py-2 bg-blue-600 text-white font-bold rounded-lg">Cập nhật</button></div>
-        </div>
-      </div>
-    );
-  };
-
   const TransactionModal = ({ txToEdit, onClose }) => {
     const [txType, setTxType] = useState(txToEdit ? txToEdit.type : 'expense');
     const [amountStr, setAmountStr] = useState(txToEdit ? formatCurrency(txToEdit.amount) : '');
@@ -436,7 +500,6 @@ export default function App() {
     const handleSave = async () => {
       const amount = getNumber(amountStr);
       if (!amount || amount <= 0) return alert('Vui lòng nhập số tiền hợp lệ');
-      
       if (txToEdit) {
         const updatedTx = { ...txToEdit, type: txType, amount, date, category, description: desc };
         const updatedList = transactions.map(t => t.id === txToEdit.id ? updatedTx : t);
@@ -479,41 +542,6 @@ export default function App() {
     );
   };
 
-  const CreateTemplateModal = () => {
-    const [name, setName] = useState('');
-    const [txType, setTxType] = useState('expense');
-    const [amountStr, setAmountStr] = useState('');
-    const [category, setCategory] = useState(categories.filter(c => c.type === 'expense')[0]?.name || '');
-    const [desc, setDesc] = useState('');
-
-    const handleSaveTemplate = () => {
-      if (!name.trim()) return alert('Vui lòng nhập tên Mẫu');
-      handleAddTemplate({ name, type: txType, amount: getNumber(amountStr), category, description: desc });
-      setShowTemplateModal(false);
-    };
-
-    return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-2 md:p-4 z-50">
-        <div className="bg-white rounded-xl max-w-lg w-full p-4 md:p-6 shadow-xl max-h-[95vh] overflow-y-auto">
-          <div className="flex justify-between items-center mb-4 md:mb-6"><h3 className="text-xl md:text-2xl font-bold">Tạo Mẫu Nhanh</h3><button onClick={() => setShowTemplateModal(false)}><X className="text-gray-500 w-6 h-6 md:w-8 md:h-8" /></button></div>
-          <div className="flex gap-2 mb-4 md:mb-6">
-            <button className={`flex-1 py-2 md:py-3 text-sm md:text-base font-bold rounded-lg ${txType === 'income' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('income'); setCategory(categories.find(c => c.type === 'income')?.name || ''); }}>MẪU THU</button>
-            <button className={`flex-1 py-2 md:py-3 text-sm md:text-base font-bold rounded-lg ${txType === 'expense' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('expense'); setCategory(categories.find(c => c.type === 'expense')?.name || ''); }}>MẪU CHI</button>
-          </div>
-          <div className="space-y-3 md:space-y-4">
-            <div><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Tên Mẫu *</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full p-2 md:p-3 text-sm md:text-base border-2 rounded-lg" autoFocus /></div>
-            <div className="flex flex-col md:flex-row gap-3 md:gap-4">
-              <div className="flex-1"><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Số Tiền (Tùy chọn)</label><input type="text" value={amountStr} onChange={(e) => setAmountStr(formatCurrency(e.target.value))} className="w-full p-2 md:p-3 text-sm md:text-base border-2 rounded-lg" /></div>
-              <div className="flex-1"><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Danh Mục</label><select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full p-2 md:p-3 text-sm md:text-base border-2 rounded-lg">{categories.filter(c => c.type === txType).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
-            </div>
-            <div><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Ghi Chú</label><input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} className="w-full p-2 md:p-3 text-sm md:text-base border-2 rounded-lg" /></div>
-          </div>
-          <div className="mt-6 md:mt-8 flex justify-end gap-3 md:gap-4"><button onClick={() => setShowTemplateModal(false)} className="px-4 py-2 md:px-6 md:py-3 text-sm md:text-base bg-gray-200 font-bold rounded-lg">Hủy</button><button onClick={handleSaveTemplate} className="px-4 py-2 md:px-6 md:py-3 text-sm md:text-base bg-blue-600 text-white font-bold rounded-lg">Lưu Mẫu</button></div>
-        </div>
-      </div>
-    );
-  };
-
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
@@ -532,15 +560,7 @@ export default function App() {
 
   return (
     <>
-      <style>{`
-        @media print {
-          @page { size: A5 portrait; margin: 15mm; }
-          body { background: white !important; margin: 0; padding: 0; color: black; }
-          .no-print { display: none !important; }
-          .print-only { display: block !important; }
-        }
-      `}</style>
-      <div className="no-print min-h-screen bg-gray-50 text-gray-900 font-sans">
+      <div className="no-print min-h-screen bg-gray-50 text-gray-900 font-sans pb-10">
         
         <header className="bg-blue-700 text-white p-3 md:p-4 shadow-md">
           <div className="max-w-6xl mx-auto flex justify-between items-center">
@@ -550,7 +570,6 @@ export default function App() {
                 <User className="w-3 h-3 md:w-4 md:h-4 text-blue-300" />
                 <span className="font-bold text-xs md:text-sm text-blue-100 truncate max-w-[80px] md:max-w-full">{currentUser.displayName}</span>
               </div>
-              <button onClick={() => setShowChangePassModal(true)} className="flex items-center justify-center bg-blue-600 p-1.5 md:px-3 md:py-2 rounded-lg font-bold hover:bg-blue-500 text-xs md:text-sm" title="Đổi mật khẩu"><Key className="w-4 h-4 md:w-5 md:h-5" /></button>
               <button onClick={() => setShowProjectModal(true)} className="flex items-center gap-1 md:gap-2 bg-blue-600 px-2 py-1.5 md:px-4 md:py-2 rounded-lg font-bold hover:bg-blue-500 text-xs md:text-sm"><BookOpen className="w-4 h-4 md:w-5 md:h-5" /> <span className="hidden md:inline">Sổ Của Tôi</span></button>
               <button onClick={handleLogout} className="flex items-center justify-center bg-red-600 p-1.5 md:px-4 md:py-2 rounded-lg font-bold hover:bg-red-500" title="Đăng xuất"><Lock className="w-4 h-4 md:w-5 md:h-5" /></button>
             </div>
@@ -614,13 +633,15 @@ export default function App() {
               {activeTab === 'list' && (
                 <div className="space-y-4">
                   <div className="flex flex-col md:flex-row justify-between items-center bg-white p-3 rounded-xl border shadow-sm gap-3">
-                    <span className="text-sm font-bold text-gray-700 w-full md:w-auto">Danh sách giao dịch ({displayTransactions.length})</span>
+                    <span className="text-sm font-bold text-gray-700 w-full md:w-auto">
+                      Đang hiển thị {paginatedData.totalLimited} {paginatedData.isCapped && '(Tối đa)'} kết quả
+                    </span>
                     <div className="flex gap-2 w-full md:w-auto">
                       <div className="relative flex-1 md:w-64">
                         <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                        <input type="text" placeholder="Tìm kiếm giao dịch..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm bg-gray-50 focus:bg-white" />
+                        <input type="text" placeholder="Tìm tên, ghi chú, số tiền..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm bg-gray-50 focus:bg-white" />
                       </div>
-                      <button onClick={exportToExcel} className="flex items-center gap-1 bg-green-600 text-white px-3 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow whitespace-nowrap">
+                      <button onClick={() => setShowExportModal(true)} className="flex items-center gap-1 bg-green-600 text-white px-3 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow whitespace-nowrap">
                         <Download className="w-4 h-4" /> Xuất Excel
                       </button>
                     </div>
@@ -630,10 +651,10 @@ export default function App() {
                     <table className="w-full text-left min-w-[700px]">
                       <thead className="bg-gray-100 border-b"><tr><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Ngày</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Nội dung</th><th className="p-3 md:p-4 text-xs md:text-sm font-bold text-gray-600">Người nhập</th><th className="p-3 md:p-4 text-xs md:text-sm text-right font-bold text-gray-600">Số Tiền</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">Sửa</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">In</th><th className="p-3 md:p-4 text-xs md:text-sm text-center font-bold text-gray-600">Xóa</th></tr></thead>
                       <tbody>
-                        {displayTransactions.map(t => (
+                        {paginatedData.items.map(t => (
                           <tr key={t.id} className="border-b hover:bg-gray-50 text-sm">
-                            <td className="p-3 md:p-4 text-gray-700 whitespace-nowrap">{t.date}</td>
-                            <td className="p-3 md:p-4"><p className="font-semibold text-gray-800">{t.category}</p><p className="text-xs text-gray-500">{t.description}</p></td>
+                            <td className="p-3 md:p-4 text-gray-700 whitespace-nowrap font-medium">{t.date}</td>
+                            <td className="p-3 md:p-4"><p className="font-bold text-gray-800">{t.category}</p><p className="text-xs text-gray-500 mt-0.5">{t.description}</p></td>
                             <td className="p-3 md:p-4"><span className="px-2 py-1 bg-gray-100 text-gray-600 text-[10px] md:text-xs font-bold rounded-md border">{t.created_by || 'Khuyết danh'}</span></td>
                             <td className={`p-3 md:p-4 text-right font-bold whitespace-nowrap ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}</td>
                             <td className="p-3 md:p-4 text-center"><button onClick={() => setEditingTx(t)} className="text-blue-500 hover:text-blue-700 mx-auto block p-1.5 md:p-2 rounded hover:bg-blue-50" title="Sửa giao dịch này"><Edit className="w-4 h-4 md:w-5 md:h-5" /></button></td>
@@ -641,9 +662,19 @@ export default function App() {
                             <td className="p-3 md:p-4 text-center"><button onClick={() => handleDeleteTransaction(t.id)} className="text-red-400 hover:text-red-600 mx-auto block p-1.5 md:p-2 rounded hover:bg-red-50" title="Xóa"><Trash2 className="w-4 h-4 md:w-5 md:h-5" /></button></td>
                           </tr>
                         ))}
+                        {paginatedData.items.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-gray-500 font-medium">Không tìm thấy giao dịch nào.</td></tr>}
                       </tbody>
                     </table>
                   </div>
+
+                  {/* NÚT ĐIỀU HƯỚNG PHÂN TRANG */}
+                  {paginatedData.totalPages > 1 && (
+                    <div className="flex justify-center items-center gap-4 mt-4 mb-2">
+                      <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className={`flex items-center gap-1 px-4 py-2 font-bold rounded-lg ${currentPage === 1 ? 'text-gray-400 bg-gray-100 cursor-not-allowed' : 'text-blue-700 bg-blue-100 hover:bg-blue-200'}`}><ChevronLeft className="w-5 h-5"/> Trước</button>
+                      <span className="font-bold text-gray-600 text-sm">Trang {currentPage} / {paginatedData.totalPages}</span>
+                      <button onClick={() => setCurrentPage(p => Math.min(paginatedData.totalPages, p + 1))} disabled={currentPage === paginatedData.totalPages} className={`flex items-center gap-1 px-4 py-2 font-bold rounded-lg ${currentPage === paginatedData.totalPages ? 'text-gray-400 bg-gray-100 cursor-not-allowed' : 'text-blue-700 bg-blue-100 hover:bg-blue-200'}`}>Sau <ChevronRight className="w-5 h-5"/></button>
+                    </div>
+                  )}
                 </div>
               )}
               
@@ -661,20 +692,10 @@ export default function App() {
                     <button onClick={() => { const name = prompt('Tên danh mục mới:'); if(name) handleAddCategory(name, window.confirm('Bấm OK nếu là danh mục THU, bấm Cancel nếu là CHI') ? 'income' : 'expense'); }} className="w-full py-2.5 md:py-3 text-sm md:text-base bg-blue-100 text-blue-700 font-bold rounded-lg hover:bg-blue-200">+ Thêm Danh Mục Mới</button>
                   </div>
                   
-                  {/* BOX NHẬP EXCEL */}
                   <div className="bg-blue-50 p-4 md:p-6 rounded-xl border border-blue-200 shadow-sm col-span-1 md:col-span-2">
-                    <h3 className="text-lg md:text-xl font-bold mb-3 border-b border-blue-200 pb-2 flex items-center gap-2 text-blue-800">
-                      <Upload className="w-5 h-5" /> Nhập Dữ Liệu Cũ (File Excel)
-                    </h3>
-                    <p className="text-sm text-gray-700 mb-4">Bạn có thể khôi phục hàng ngàn dữ liệu cũ vào sổ hiện tại. File Excel cần có đuôi <b>.xlsx</b> và các cột: <i>Ngày, Danh Mục, Ghi Chú, Người Nhập, Tiền Thu (VNĐ), Tiền Chi (VNĐ).</i></p>
-                    
-                    {isImporting ? (
-                      <div className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg text-center animate-pulse flex justify-center items-center gap-2">
-                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Đang xử lý đẩy dữ liệu lên máy chủ...
-                      </div>
-                    ) : (
-                      <input type="file" accept=".xlsx, .xls" onChange={handleImportExcel} className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer" />
-                    )}
+                    <h3 className="text-lg md:text-xl font-bold mb-3 border-b border-blue-200 pb-2 flex items-center gap-2 text-blue-800"><Upload className="w-5 h-5" /> Nhập Dữ Liệu Cũ (File Excel)</h3>
+                    <p className="text-sm text-gray-700 mb-4">Khôi phục hàng ngàn dữ liệu cũ vào sổ hiện tại. File Excel cần có đuôi <b>.xlsx</b> và các cột: <i>Ngày, Danh Mục, Ghi Chú, Người Nhập, Tiền Thu (VNĐ), Tiền Chi (VNĐ).</i></p>
+                    {isImporting ? (<div className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg text-center animate-pulse flex justify-center items-center gap-2"><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Đang xử lý đẩy dữ liệu lên máy chủ...</div>) : (<input type="file" accept=".xlsx, .xls" onChange={handleImportExcel} className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer" />)}
                   </div>
                 </div>
               )}
@@ -688,23 +709,11 @@ export default function App() {
           </div>
         )}
         
-        {showChangePassModal && <ChangePasswordModal />}
-        
+        {showExportModal && <ExportExcelModal />}
         { (showTxModal || editingTx) && <TransactionModal txToEdit={editingTx} onClose={() => { setShowTxModal(false); setEditingTx(null); }} /> }
-        
         {showTemplateModal && <CreateTemplateModal />}
 
-        {transactionToPrint && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-2 md:p-4 z-[60]">
-            <div className="bg-gray-200 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] w-[160mm]">
-              <div className="bg-gray-800 text-white p-3 md:p-4 flex justify-between items-center"><h3 className="font-bold text-sm md:text-base">Xem trước Phiếu (Khổ A5 dọc)</h3><button onClick={() => setTransactionToPrint(null)} className="hover:text-red-400"><X className="w-5 h-5 md:w-6 md:h-6" /></button></div>
-              <div className="p-4 md:p-8 overflow-y-auto flex justify-center"><div className="bg-white shadow-md border transform scale-75 origin-top md:scale-100" style={{ width: '148mm', minHeight: '210mm', marginBottom: '-50px' }}><ReceiptContent t={transactionToPrint} /></div></div>
-              <div className="bg-white p-3 md:p-4 border-t flex justify-end gap-3 md:gap-4"><button onClick={() => setTransactionToPrint(null)} className="px-4 py-2 md:px-6 md:py-2 text-sm md:text-base bg-gray-300 font-bold rounded hover:bg-gray-400 text-gray-800">Đóng lại</button><button onClick={() => window.print()} className="px-4 py-2 md:px-8 md:py-2 text-sm md:text-base bg-blue-600 text-white font-bold rounded flex items-center gap-2 hover:bg-blue-700 shadow-md"><Printer className="w-4 h-4 md:w-5 md:h-5" /> In Phiếu Này</button></div>
-            </div>
-          </div>
-        )}
       </div>
-      <div className="hidden print-only">{transactionToPrint && <ReceiptContent t={transactionToPrint} />}</div>
     </>
   );
 }
