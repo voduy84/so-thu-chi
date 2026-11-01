@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key, Download, Edit, Search } from 'lucide-react';
+import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key, Download, Edit, Search, Upload } from 'lucide-react';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -39,17 +39,18 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   
   const [showTxModal, setShowTxModal] = useState(false);
-  const [editingTx, setEditingTx] = useState(null); // Giao dịch đang được sửa
+  const [editingTx, setEditingTx] = useState(null); 
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showChangePassModal, setShowChangePassModal] = useState(false); 
   const [transactionToPrint, setTransactionToPrint] = useState(null);
   const [showFilter, setShowFilter] = useState(false);
+  const [isImporting, setIsImporting] = useState(false); // Trạng thái loading khi up file
   
   const [dateFilter, setDateFilter] = useState('all');
   const [chartGroup, setChartGroup] = useState('month');
   const [uncheckedCategories, setUncheckedCategories] = useState([]);
-  const [searchTerm, setSearchTerm] = useState(''); // Tìm kiếm
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     const savedUser = sessionStorage.getItem('stc_current_user');
@@ -64,26 +65,19 @@ export default function App() {
     e.preventDefault();
     const uid = usernameInput.toLowerCase().trim();
     const userAcc = ACCOUNTS[uid];
-    
     if (!userAcc) return alert('Tên đăng nhập không tồn tại!');
-
     let activePassword = userAcc.defaultPassword;
-
     if (supabase) {
       try {
         const { data } = await supabase.from('app_users').select('password').eq('username', uid).single();
         if (data && data.password) activePassword = data.password;
       } catch (err) { console.error("Lỗi kiểm tra pass", err); }
     }
-
     if (passwordInput === activePassword) {
       const userSession = { username: uid, role: userAcc.role, displayName: userAcc.displayName };
       setCurrentUser(userSession);
       sessionStorage.setItem('stc_current_user', JSON.stringify(userSession));
-    } else {
-      alert('Mật khẩu không chính xác!');
-      setPasswordInput('');
-    }
+    } else { alert('Mật khẩu không chính xác!'); setPasswordInput(''); }
   };
 
   const handleLogout = () => {
@@ -91,9 +85,7 @@ export default function App() {
     sessionStorage.removeItem('stc_current_user');
   };
 
-  useEffect(() => {
-    if (currentUser) fetchData();
-  }, [currentUser]);
+  useEffect(() => { if (currentUser) fetchData(); }, [currentUser]);
 
   const fetchData = async () => {
     if (supabase) {
@@ -104,7 +96,6 @@ export default function App() {
           supabase.from('templates').select('*'),
           supabase.from('custom_categories').select('*')
         ]);
-        
         if (pData) { setProjects(pData); localStorage.setItem('stc_projects', JSON.stringify(pData)); }
         if (tData) { setTransactions(tData); localStorage.setItem('stc_transactions', JSON.stringify(tData)); }
         if (tmplData) { setTemplates(tmplData); localStorage.setItem('stc_templates', JSON.stringify(tmplData)); }
@@ -119,10 +110,14 @@ export default function App() {
     return isNaN(num) ? '' : num.toLocaleString('en-US');
   };
 
-  const getNumber = (val) => parseInt(val?.toString().replace(/,/g, '')) || 0;
-  const generateId = () => Math.random().toString(36).substr(2, 9);
+  const getNumber = (val) => {
+    if (val === undefined || val === null) return 0;
+    return parseInt(val.toString().replace(/,/g, '')) || 0;
+  };
+  
+  // Hàm tạo ID chống trùng lặp tuyệt đối khi nhập hàng nghìn dòng
+  const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 
-  // Bộ lọc ngày & Sổ
   const filteredTransactions = useMemo(() => {
     let filtered = transactions.filter(t => t.project_id === selectedProjectId);
     const today = new Date();
@@ -132,7 +127,6 @@ export default function App() {
     return filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
   }, [transactions, selectedProjectId, dateFilter]);
 
-  // Bộ lọc tìm kiếm Text
   const displayTransactions = useMemo(() => {
     if (!searchTerm.trim()) return filteredTransactions;
     const lower = searchTerm.toLowerCase();
@@ -144,7 +138,6 @@ export default function App() {
     );
   }, [filteredTransactions, searchTerm]);
 
-  // Dashboard chỉ tính các danh mục không bị ẩn
   const activeTransactionsForDashboard = useMemo(() => {
     return displayTransactions.filter(t => !uncheckedCategories.includes(t.category));
   }, [displayTransactions, uncheckedCategories]);
@@ -177,8 +170,7 @@ export default function App() {
   const handleAddProject = async (name) => {
     const newP = { id: generateId(), name, created_at: new Date().toISOString() };
     const updated = [...projects, newP];
-    setProjects(updated);
-    localStorage.setItem('stc_projects', JSON.stringify(updated));
+    setProjects(updated); localStorage.setItem('stc_projects', JSON.stringify(updated));
     if (supabase) { await supabase.from('projects').insert([newP]); fetchData(); } 
     if (!selectedProjectId) setSelectedProjectId(newP.id);
   };
@@ -196,12 +188,10 @@ export default function App() {
     }
   };
 
-  // NHÂN VIÊN ĐƯỢC QUYỀN XOÁ GIAO DỊCH
   const handleDeleteTransaction = async (id) => {
     if (window.confirm('Bạn có chắc chắn muốn xóa giao dịch này?')) {
       const updated = transactions.filter(tx => tx.id !== id);
-      setTransactions(updated);
-      localStorage.setItem('stc_transactions', JSON.stringify(updated));
+      setTransactions(updated); localStorage.setItem('stc_transactions', JSON.stringify(updated));
       if (supabase) { await supabase.from('transactions').delete().eq('id', id); fetchData(); }
     }
   };
@@ -236,11 +226,9 @@ export default function App() {
     if (supabase) { await supabase.from('templates').delete().eq('id', id); fetchData(); } 
   };
 
-  // XUẤT EXCEL (ĐÃ TÁCH CỘT THU - CHI)
   const exportToExcel = async () => {
     if (displayTransactions.length === 0) return alert('Không có dữ liệu để xuất!');
     const XLSX = await import('xlsx');
-    
     const excelData = displayTransactions.map(t => ({
       'Ngày': t.date,
       'Giờ': new Date(t.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
@@ -250,12 +238,123 @@ export default function App() {
       'Tiền Thu (VNĐ)': t.type === 'income' ? t.amount : '',
       'Tiền Chi (VNĐ)': t.type === 'expense' ? t.amount : ''
     }));
-
     const worksheet = XLSX.utils.json_to_sheet(excelData);
     worksheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 25 }, { wch: 40 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Giao_Dich");
     XLSX.writeFile(workbook, `SoThuChi_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
+
+  // === TÍNH NĂNG NHẬP EXCEL MỚI ===
+  const handleImportExcel = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!checkAdmin()) { e.target.value = null; return; }
+    if (!selectedProjectId) { alert('Vui lòng chọn một Sổ trước khi nhập dữ liệu!'); e.target.value = null; return; }
+    if (!window.confirm(`Bạn sắp nhập hàng loạt dữ liệu từ file "${file.name}" vào sổ hiện tại. Bạn có chắc chắn?`)) { e.target.value = null; return; }
+    
+    setIsImporting(true);
+    try {
+      const XLSX = await import('xlsx');
+      const reader = new FileReader();
+      
+      reader.onload = async (evt) => {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws);
+        
+        let newTransactions = [];
+        let newCatsMap = new Map();
+        
+        data.forEach(row => {
+          let thu = getNumber(row['Tiền Thu (VNĐ)']);
+          let chi = getNumber(row['Tiền Chi (VNĐ)']);
+          let amount = 0;
+          let type = 'expense';
+          
+          if (thu > 0) { amount = thu; type = 'income'; }
+          else if (chi > 0) { amount = chi; type = 'expense'; }
+          else return; 
+          
+          let txDate = new Date().toISOString().split('T')[0];
+          if (row['Ngày']) {
+            if (row['Ngày'] instanceof Date) {
+              const y = row['Ngày'].getFullYear();
+              const m = String(row['Ngày'].getMonth() + 1).padStart(2, '0');
+              const d = String(row['Ngày'].getDate()).padStart(2, '0');
+              txDate = `${y}-${m}-${d}`;
+            } else if (typeof row['Ngày'] === 'string') {
+               txDate = row['Ngày'].substring(0, 10);
+            }
+          }
+          
+          const catName = row['Danh Mục'] ? row['Danh Mục'].toString().trim() : 'Khác';
+          const catKey = catName.toLowerCase();
+          
+          if (!categories.find(c => c.name.toLowerCase() === catKey) && !newCatsMap.has(catKey)) {
+             newCatsMap.set(catKey, { id: generateId(), name: catName, type: type, created_at: new Date().toISOString() });
+          }
+
+          newTransactions.push({
+            id: generateId(),
+            project_id: selectedProjectId,
+            type: type,
+            amount: amount,
+            date: txDate,
+            category: catName,
+            description: row['Ghi Chú'] ? row['Ghi Chú'].toString() : '',
+            created_by: row['Người Nhập'] ? row['Người Nhập'].toString() : currentUser.displayName,
+            created_at: new Date().toISOString() // Dùng giờ hiện tại vì data cũ thường mất mốc giờ cụ thể
+          });
+        });
+        
+        if (newTransactions.length === 0) {
+           alert('Không tìm thấy dữ liệu hợp lệ trong file!');
+           setIsImporting(false); e.target.value = null; return;
+        }
+        
+        if (!window.confirm(`Tìm thấy ${newTransactions.length} giao dịch hợp lệ. Bấm OK để bắt đầu đẩy lên hệ thống. Vui lòng không tắt trang...`)) {
+           setIsImporting(false); e.target.value = null; return;
+        }
+
+        // Tạo danh mục mới nếu có
+        const newCatsArray = Array.from(newCatsMap.values());
+        if (newCatsArray.length > 0) {
+             if (supabase) await supabase.from('custom_categories').insert(newCatsArray);
+             const updatedCats = [...categories, ...newCatsArray];
+             setCategories(updatedCats);
+             localStorage.setItem('stc_categories', JSON.stringify(updatedCats));
+        }
+
+        // Đẩy giao dịch lên Supabase chia nhỏ 500 dòng/lần tránh treo
+        if (supabase) {
+           const chunkSize = 500;
+           for (let i = 0; i < newTransactions.length; i += chunkSize) {
+               const chunk = newTransactions.slice(i, i + chunkSize);
+               const { error } = await supabase.from('transactions').insert(chunk);
+               if (error) {
+                  console.error('Lỗi khi import chunk', error);
+                  alert('Có lỗi xảy ra khi đẩy dữ liệu: ' + error.message);
+                  setIsImporting(false); e.target.value = null; return;
+               }
+           }
+        }
+        
+        const updatedList = [...newTransactions, ...transactions];
+        setTransactions(updatedList);
+        localStorage.setItem('stc_transactions', JSON.stringify(updatedList));
+        
+        alert(`🎉 TUYỆT VỜI! Đã nhập thành công ${newTransactions.length} giao dịch vào sổ hiện tại.`);
+        setIsImporting(false); e.target.value = null; 
+      };
+      reader.readAsBinaryString(file);
+    } catch (err) {
+       console.error(err);
+       alert('Lỗi khi đọc file Excel!');
+       setIsImporting(false); e.target.value = null;
+    }
   };
 
   const ReceiptContent = ({ t }) => {
@@ -323,7 +422,6 @@ export default function App() {
     );
   };
 
-  // MODAL ĐÃ ĐƯỢC TÍCH HỢP TÍNH NĂNG "SỬA GIAO DỊCH" (EDIT)
   const TransactionModal = ({ txToEdit, onClose }) => {
     const [txType, setTxType] = useState(txToEdit ? txToEdit.type : 'expense');
     const [amountStr, setAmountStr] = useState(txToEdit ? formatCurrency(txToEdit.amount) : '');
@@ -340,18 +438,14 @@ export default function App() {
       if (!amount || amount <= 0) return alert('Vui lòng nhập số tiền hợp lệ');
       
       if (txToEdit) {
-        // CẬP NHẬT GIAO DỊCH CŨ
         const updatedTx = { ...txToEdit, type: txType, amount, date, category, description: desc };
         const updatedList = transactions.map(t => t.id === txToEdit.id ? updatedTx : t);
-        setTransactions(updatedList);
-        localStorage.setItem('stc_transactions', JSON.stringify(updatedList));
+        setTransactions(updatedList); localStorage.setItem('stc_transactions', JSON.stringify(updatedList));
         if (supabase) { await supabase.from('transactions').update({ type: txType, amount, date, category, description: desc }).eq('id', txToEdit.id); fetchData(); }
       } else {
-        // THÊM GIAO DỊCH MỚI
         const newTx = { id: generateId(), project_id: selectedProjectId, type: txType, amount, date, category, description: desc, created_at: new Date().toISOString(), created_by: currentUser.displayName };
         const updatedList = [newTx, ...transactions];
-        setTransactions(updatedList);
-        localStorage.setItem('stc_transactions', JSON.stringify(updatedList));
+        setTransactions(updatedList); localStorage.setItem('stc_transactions', JSON.stringify(updatedList));
         if (supabase) { await supabase.from('transactions').insert([newTx]); fetchData(); } 
       }
       onClose();
@@ -477,7 +571,7 @@ export default function App() {
                 </div>
                 
                 <button onClick={() => setShowTxModal(true)} className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-3.5 md:py-4 rounded-xl font-extrabold text-lg md:text-xl hover:bg-blue-700 shadow-lg transition active:scale-[0.99]">
-                  <Plus className="w-7 h-7 stroke-[3]" /> GHI THU / CHI NGAY
+                  <Plus className="w-7 h-7 stroke-[3]" /> NHẬP LIỆU THU / CHI
                 </button>
               </div>
               
@@ -519,7 +613,6 @@ export default function App() {
 
               {activeTab === 'list' && (
                 <div className="space-y-4">
-                  {/* THANH TÌM KIẾM MỚI VÀ XUẤT EXCEL */}
                   <div className="flex flex-col md:flex-row justify-between items-center bg-white p-3 rounded-xl border shadow-sm gap-3">
                     <span className="text-sm font-bold text-gray-700 w-full md:w-auto">Danh sách giao dịch ({displayTransactions.length})</span>
                     <div className="flex gap-2 w-full md:w-auto">
@@ -543,13 +636,8 @@ export default function App() {
                             <td className="p-3 md:p-4"><p className="font-semibold text-gray-800">{t.category}</p><p className="text-xs text-gray-500">{t.description}</p></td>
                             <td className="p-3 md:p-4"><span className="px-2 py-1 bg-gray-100 text-gray-600 text-[10px] md:text-xs font-bold rounded-md border">{t.created_by || 'Khuyết danh'}</span></td>
                             <td className={`p-3 md:p-4 text-right font-bold whitespace-nowrap ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}</td>
-                            
-                            {/* NÚT SỬA MỚI */}
                             <td className="p-3 md:p-4 text-center"><button onClick={() => setEditingTx(t)} className="text-blue-500 hover:text-blue-700 mx-auto block p-1.5 md:p-2 rounded hover:bg-blue-50" title="Sửa giao dịch này"><Edit className="w-4 h-4 md:w-5 md:h-5" /></button></td>
-                            
                             <td className="p-3 md:p-4 text-center"><button onClick={() => setTransactionToPrint(t)} className="text-gray-500 hover:text-gray-800 mx-auto block p-1.5 md:p-2 rounded hover:bg-gray-200" title="In phiếu này"><Printer className="w-4 h-4 md:w-5 md:h-5" /></button></td>
-                            
-                            {/* NÚT XÓA: Giờ Nhân Viên đã có thể xóa thoải mái */}
                             <td className="p-3 md:p-4 text-center"><button onClick={() => handleDeleteTransaction(t.id)} className="text-red-400 hover:text-red-600 mx-auto block p-1.5 md:p-2 rounded hover:bg-red-50" title="Xóa"><Trash2 className="w-4 h-4 md:w-5 md:h-5" /></button></td>
                           </tr>
                         ))}
@@ -566,10 +654,27 @@ export default function App() {
                     <div className="space-y-3 md:space-y-4 mb-6">{templates.map(tmpl => <div key={tmpl.id} className="flex justify-between items-center p-2 md:p-3 bg-gray-50 rounded-lg border"><div><p className="font-bold text-sm md:text-base">{tmpl.name}</p><p className="text-xs md:text-sm text-gray-500">{tmpl.category} • {formatCurrency(tmpl.amount)}đ</p></div><button onClick={() => handleDeleteTemplate(tmpl.id)} className="text-red-500 p-2 hover:bg-red-50 rounded"><Trash2 className="w-4 h-4 md:w-5 md:h-5" /></button></div>)}</div>
                     <button onClick={() => setShowTemplateModal(true)} className="w-full py-2.5 md:py-3 text-sm md:text-base bg-blue-100 text-blue-700 font-bold rounded-lg hover:bg-blue-200">+ Tạo Mẫu Nhanh Mới</button>
                   </div>
+                  
                   <div className="bg-white p-4 md:p-6 rounded-xl border shadow-sm">
                     <h3 className="text-lg md:text-xl font-bold mb-4 border-b pb-2">Quản Lý Danh Mục</h3>
                     <div className="space-y-3 md:space-y-4 mb-6">{categories.map(cat => (<div key={cat.id} className="flex justify-between items-center p-2 md:p-3 bg-gray-50 rounded-lg border"><p className="font-bold text-sm md:text-base">{cat.name}</p><div className="flex items-center gap-2 md:gap-3"><span className={`px-1.5 py-0.5 md:px-2 md:py-1 rounded text-[10px] md:text-sm font-bold ${cat.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{cat.type === 'income' ? 'THU' : 'CHI'}</span><button onClick={() => handleDeleteCategory(cat.id)} className="text-red-500 p-1 hover:bg-red-100 rounded" title="Xóa danh mục"><Trash2 className="w-4 h-4 md:w-5 md:h-5" /></button></div></div>))}</div>
                     <button onClick={() => { const name = prompt('Tên danh mục mới:'); if(name) handleAddCategory(name, window.confirm('Bấm OK nếu là danh mục THU, bấm Cancel nếu là CHI') ? 'income' : 'expense'); }} className="w-full py-2.5 md:py-3 text-sm md:text-base bg-blue-100 text-blue-700 font-bold rounded-lg hover:bg-blue-200">+ Thêm Danh Mục Mới</button>
+                  </div>
+                  
+                  {/* BOX NHẬP EXCEL */}
+                  <div className="bg-blue-50 p-4 md:p-6 rounded-xl border border-blue-200 shadow-sm col-span-1 md:col-span-2">
+                    <h3 className="text-lg md:text-xl font-bold mb-3 border-b border-blue-200 pb-2 flex items-center gap-2 text-blue-800">
+                      <Upload className="w-5 h-5" /> Nhập Dữ Liệu Cũ (File Excel)
+                    </h3>
+                    <p className="text-sm text-gray-700 mb-4">Bạn có thể khôi phục hàng ngàn dữ liệu cũ vào sổ hiện tại. File Excel cần có đuôi <b>.xlsx</b> và các cột: <i>Ngày, Danh Mục, Ghi Chú, Người Nhập, Tiền Thu (VNĐ), Tiền Chi (VNĐ).</i></p>
+                    
+                    {isImporting ? (
+                      <div className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg text-center animate-pulse flex justify-center items-center gap-2">
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Đang xử lý đẩy dữ liệu lên máy chủ...
+                      </div>
+                    ) : (
+                      <input type="file" accept=".xlsx, .xls" onChange={handleImportExcel} className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer" />
+                    )}
                   </div>
                 </div>
               )}
@@ -585,7 +690,6 @@ export default function App() {
         
         {showChangePassModal && <ChangePasswordModal />}
         
-        {/* Render Modal Thêm/Sửa */}
         { (showTxModal || editingTx) && <TransactionModal txToEdit={editingTx} onClose={() => { setShowTxModal(false); setEditingTx(null); }} /> }
         
         {showTemplateModal && <CreateTemplateModal />}
