@@ -43,18 +43,21 @@ export default function App() {
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showChangePassModal, setShowChangePassModal] = useState(false); 
-  const [showExportModal, setShowExportModal] = useState(false); // Modal xuất Excel
+  const [showExportModal, setShowExportModal] = useState(false);
   
   const [transactionToPrint, setTransactionToPrint] = useState(null);
   const [showFilter, setShowFilter] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   
-  const [dateFilter, setDateFilter] = useState('all');
+  // Yêu cầu 2: Mặc định hiển thị Tháng hiện tại
+  const [dateFilter, setDateFilter] = useState('month');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+
   const [chartGroup, setChartGroup] = useState('month');
   const [uncheckedCategories, setUncheckedCategories] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Trạng thái phân trang
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 30;
   const MAX_DISPLAY_ITEMS = 300;
@@ -68,10 +71,9 @@ export default function App() {
     if (projects.length > 0 && !selectedProjectId) setSelectedProjectId(projects[0].id);
   }, [projects]);
 
-  // Đặt lại trang 1 nếu đổi bộ lọc hoặc tìm kiếm
   useEffect(() => {
     setCurrentPage(1);
-  }, [dateFilter, searchTerm, selectedProjectId]);
+  }, [dateFilter, searchTerm, selectedProjectId, customStartDate, customEndDate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -99,7 +101,6 @@ export default function App() {
 
   useEffect(() => { if (currentUser) fetchData(); }, [currentUser]);
 
-  // Kéo toàn bộ data bằng Loop để Chart/Thống kê đầy đủ
   const fetchData = async () => {
     if (supabase) {
       try {
@@ -143,22 +144,29 @@ export default function App() {
   const getNumber = (val) => parseInt(val?.toString().replace(/,/g, '')) || 0;
   const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 
-  // Lọc và Sắp xếp: Ưu tiên ngày Giao dịch > Ngày tạo (Mới nhất lên đầu)
+  // Lọc và Sắp xếp theo yêu cầu 1 & 2
   const filteredTransactions = useMemo(() => {
     let filtered = transactions.filter(t => t.project_id === selectedProjectId);
     const today = new Date();
-    if (dateFilter === 'today') filtered = filtered.filter(t => t.date === today.toISOString().split('T')[0]);
-    else if (dateFilter === 'month') filtered = filtered.filter(t => t.date.startsWith(today.toISOString().slice(0, 7)));
-    else if (dateFilter === 'year') filtered = filtered.filter(t => t.date.startsWith(today.toISOString().slice(0, 4)));
+    if (dateFilter === 'today') {
+      filtered = filtered.filter(t => t.date === today.toISOString().split('T')[0]);
+    } else if (dateFilter === 'month') {
+      filtered = filtered.filter(t => t.date.startsWith(today.toISOString().slice(0, 7)));
+    } else if (dateFilter === 'year') {
+      filtered = filtered.filter(t => t.date.startsWith(today.toISOString().slice(0, 4)));
+    } else if (dateFilter === 'custom') {
+      if (customStartDate && customEndDate) {
+        filtered = filtered.filter(t => t.date >= customStartDate && t.date <= customEndDate);
+      }
+    }
     
     return filtered.sort((a, b) => {
       const dateDiff = new Date(b.date) - new Date(a.date);
       if (dateDiff !== 0) return dateDiff;
       return new Date(b.created_at) - new Date(a.created_at);
     });
-  }, [transactions, selectedProjectId, dateFilter]);
+  }, [transactions, selectedProjectId, dateFilter, customStartDate, customEndDate]);
 
-  // Khắc phục lỗi tìm kiếm Ghi chú (Kiểm tra null)
   const displayTransactions = useMemo(() => {
     if (!searchTerm.trim()) return filteredTransactions;
     const lower = searchTerm.toLowerCase();
@@ -170,7 +178,6 @@ export default function App() {
     );
   }, [filteredTransactions, searchTerm]);
 
-  // Dashboard chỉ tính các danh mục không bị ẩn
   const activeTransactionsForDashboard = useMemo(() => {
     return displayTransactions.filter(t => !uncheckedCategories.includes(t.category));
   }, [displayTransactions, uncheckedCategories]);
@@ -192,7 +199,6 @@ export default function App() {
     return Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name));
   }, [activeTransactionsForDashboard, chartGroup]);
 
-  // === LOGIC PHÂN TRANG (Tối đa 300 kết quả, 30 items/trang) ===
   const paginatedData = useMemo(() => {
     const limitedData = displayTransactions.slice(0, MAX_DISPLAY_ITEMS);
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -351,20 +357,20 @@ export default function App() {
     } catch (err) { alert('Lỗi đọc Excel!'); setIsImporting(false); e.target.value = null; }
   };
 
-  // === CỬA SỔ XUẤT EXCEL THÔNG MINH ===
+  // === YÊU CẦU 4: XUẤT EXCEL CÓ THÊM DÒNG TỔNG KẾT ===
   const ExportExcelModal = () => {
-    const [exportType, setExportType] = useState('filter'); // filter, range, specific
+    const [exportType, setExportType] = useState('filter'); 
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
-    const [specificType, setSpecificType] = useState('month'); // day, month, year
-    const [specificValue, setSpecificValue] = useState(new Date().toISOString().slice(0, 7)); // default YYYY-MM
+    const [specificType, setSpecificType] = useState('month'); 
+    const [specificValue, setSpecificValue] = useState(new Date().toISOString().slice(0, 7));
 
     const handleExecuteExport = async () => {
       let dataToExport = [];
       const projectTxs = transactions.filter(t => t.project_id === selectedProjectId);
 
       if (exportType === 'filter') {
-        dataToExport = displayTransactions; // Dùng đúng dữ liệu đang lọc trên màn hình
+        dataToExport = displayTransactions; 
       } else if (exportType === 'range') {
         if (!startDate || !endDate) return alert('Vui lòng chọn Ngày Bắt Đầu và Ngày Kết Thúc');
         if (startDate > endDate) return alert('Ngày bắt đầu không được lớn hơn ngày kết thúc');
@@ -378,21 +384,50 @@ export default function App() {
         return alert('Không có dữ liệu giao dịch nào trong phạm vi bạn chọn!');
       }
 
-      // Sắp xếp trước khi xuất
       dataToExport.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-      const XLSX = await import('xlsx');
-      const excelData = dataToExport.map(t => ({
-        'Ngày': t.date,
-        'Giờ': new Date(t.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-        'Danh Mục': t.category,
-        'Ghi Chú': t.description || '',
-        'Người Nhập': t.created_by || 'Khuyết danh',
-        'Tiền Thu (VNĐ)': t.type === 'income' ? t.amount : '',
-        'Tiền Chi (VNĐ)': t.type === 'expense' ? t.amount : ''
-      }));
+      let totalIncome = 0;
+      let totalExpense = 0;
 
-      const worksheet = XLSX.utils.json_to_sheet(excelData);
+      const excelRows = dataToExport.map(t => {
+        const isInc = t.type === 'income';
+        if (isInc) totalIncome += t.amount;
+        else totalExpense += t.amount;
+
+        return {
+          'Ngày': t.date,
+          'Giờ': new Date(t.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+          'Danh Mục': t.category,
+          'Ghi Chú': t.description || '',
+          'Người Nhập': t.created_by || 'Khuyết danh',
+          'Tiền Thu (VNĐ)': isInc ? t.amount : '',
+          'Tiền Chi (VNĐ)': !isInc ? t.amount : ''
+        };
+      });
+
+      // Thêm dòng tổng kết theo yêu cầu 4
+      excelRows.push({}); // Dòng trống ngăn cách
+      excelRows.push({
+        'Ngày': 'TỔNG CỘNG',
+        'Giờ': '',
+        'Danh Mục': '',
+        'Ghi Chú': '',
+        'Người Nhập': '',
+        'Tiền Thu (VNĐ)': totalIncome,
+        'Tiền Chi (VNĐ)': totalExpense
+      });
+      excelRows.push({
+        'Ngày': 'CHÊNH LỆCH (THU - CHI)',
+        'Giờ': '',
+        'Danh Mục': '',
+        'Ghi Chú': '',
+        'Người Nhập': '',
+        'Tiền Thu (VNĐ)': totalIncome - totalExpense,
+        'Tiền Chi (VNĐ)': ''
+      });
+
+      const XLSX = await import('xlsx');
+      const worksheet = XLSX.utils.json_to_sheet(excelRows);
       worksheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 25 }, { wch: 40 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Giao_Dich");
@@ -560,6 +595,14 @@ export default function App() {
 
   return (
     <>
+      <style>{`
+        @media print {
+          @page { size: A5 portrait; margin: 15mm; }
+          body { background: white !important; margin: 0; padding: 0; color: black; }
+          .no-print { display: none !important; }
+          .print-only { display: block !important; }
+        }
+      `}</style>
       <div className="no-print min-h-screen bg-gray-50 text-gray-900 font-sans pb-10">
         
         <header className="bg-blue-700 text-white p-3 md:p-4 shadow-md">
@@ -602,14 +645,22 @@ export default function App() {
 
               {activeTab === 'dashboard' && (
                 <div className="space-y-4 md:space-y-6">
+                  {/* Yêu cầu 1 & 2: Bộ lọc thời gian với mặc định là Tháng này + Nút Tùy chỉnh khoảng thời gian */}
                   <div className="bg-white p-3 rounded-xl border shadow-sm">
                     <p className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Khoảng thời gian thống kê:</p>
-                    <div className="grid grid-cols-4 gap-1.5">
+                    <div className="grid grid-cols-5 gap-1.5">
                       <button onClick={() => setDateFilter('today')} className={`py-2 px-1 text-xs md:text-sm font-bold rounded-lg border text-center transition ${dateFilter === 'today' ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}>Hôm nay</button>
                       <button onClick={() => setDateFilter('month')} className={`py-2 px-1 text-xs md:text-sm font-bold rounded-lg border text-center transition ${dateFilter === 'month' ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}>Tháng này</button>
                       <button onClick={() => setDateFilter('year')} className={`py-2 px-1 text-xs md:text-sm font-bold rounded-lg border text-center transition ${dateFilter === 'year' ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}>Năm nay</button>
                       <button onClick={() => setDateFilter('all')} className={`py-2 px-1 text-xs md:text-sm font-bold rounded-lg border text-center transition ${dateFilter === 'all' ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}>Tất cả</button>
+                      <button onClick={() => setDateFilter('custom')} className={`py-2 px-1 text-xs md:text-sm font-bold rounded-lg border text-center transition ${dateFilter === 'custom' ? 'bg-blue-600 text-white border-blue-600 shadow' : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}`}>Tùy chỉnh</button>
                     </div>
+                    {dateFilter === 'custom' && (
+                      <div className="flex flex-col md:flex-row gap-2 mt-3 pt-3 border-t items-center text-sm">
+                        <div className="flex items-center gap-2 w-full"><span>Từ ngày:</span> <input type="date" value={customStartDate} onChange={e => setCustomStartDate(e.target.value)} className="border p-2 rounded flex-1" /></div>
+                        <div className="flex items-center gap-2 w-full"><span>Đến ngày:</span> <input type="date" value={customEndDate} onChange={e => setCustomEndDate(e.target.value)} className="border p-2 rounded flex-1" /></div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="bg-white p-3 md:p-4 rounded-xl border shadow-sm">
@@ -617,10 +668,11 @@ export default function App() {
                     {showFilter && (<div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">{categories.map(cat => (<label key={cat.id} className="flex items-center gap-1.5 cursor-pointer px-2 py-1.5 md:p-2 bg-gray-50 rounded border hover:bg-gray-100 text-xs md:text-sm"><input type="checkbox" checked={!uncheckedCategories.includes(cat.name)} onChange={() => { setUncheckedCategories(prev => prev.includes(cat.name) ? prev.filter(c => c !== cat.name) : [...prev, cat.name]) }} className="w-4 h-4 md:w-5 md:h-5 accent-blue-600" /><span className={`font-bold ${cat.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>{cat.name}</span></label>))}</div>)}
                   </div>
 
+                  {/* Hiển thị tổng thu, tổng chi và phần chênh lệch */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-6">
                     <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-green-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">TỔNG THU (Đã Lọc)</p><p className="text-xl md:text-3xl font-extrabold text-green-600">{formatCurrency(summary.income)} đ</p></div>
                     <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-red-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">TỔNG CHI (Đã Lọc)</p><p className="text-xl md:text-3xl font-extrabold text-red-600">{formatCurrency(summary.expense)} đ</p></div>
-                    <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-blue-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">SỐ DƯ CÔNG NỢ</p><p className="text-xl md:text-3xl font-extrabold text-blue-700">{formatCurrency(summary.income - summary.expense)} đ</p></div>
+                    <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-blue-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">CHÊNH LỆCH (THU - CHI)</p><p className="text-xl md:text-3xl font-extrabold text-blue-700">{formatCurrency(summary.income - summary.expense)} đ</p></div>
                   </div>
                   
                   <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border">
@@ -667,7 +719,6 @@ export default function App() {
                     </table>
                   </div>
 
-                  {/* NÚT ĐIỀU HƯỚNG PHÂN TRANG */}
                   {paginatedData.totalPages > 1 && (
                     <div className="flex justify-center items-center gap-4 mt-4 mb-2">
                       <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className={`flex items-center gap-1 px-4 py-2 font-bold rounded-lg ${currentPage === 1 ? 'text-gray-400 bg-gray-100 cursor-not-allowed' : 'text-blue-700 bg-blue-100 hover:bg-blue-200'}`}><ChevronLeft className="w-5 h-5"/> Trước</button>
@@ -713,7 +764,17 @@ export default function App() {
         { (showTxModal || editingTx) && <TransactionModal txToEdit={editingTx} onClose={() => { setShowTxModal(false); setEditingTx(null); }} /> }
         {showTemplateModal && <CreateTemplateModal />}
 
+        {transactionToPrint && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-2 md:p-4 z-[60] no-print">
+            <div className="bg-gray-200 rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] w-[160mm]">
+              <div className="bg-gray-800 text-white p-3 md:p-4 flex justify-between items-center"><h3 className="font-bold text-sm md:text-base">Xem trước Phiếu (Khổ A5 dọc)</h3><button onClick={() => setTransactionToPrint(null)} className="hover:text-red-400"><X className="w-5 h-5 md:w-6 md:h-6" /></button></div>
+              <div className="p-4 md:p-8 overflow-y-auto flex justify-center"><div className="bg-white shadow-md border transform scale-75 origin-top md:scale-100" style={{ width: '148mm', minHeight: '210mm', marginBottom: '-50px' }}><ReceiptContent t={transactionToPrint} /></div></div>
+              <div className="bg-white p-3 md:p-4 border-t flex justify-end gap-3 md:gap-4"><button onClick={() => setTransactionToPrint(null)} className="px-4 py-2 md:px-6 md:py-2 text-sm md:text-base bg-gray-300 font-bold rounded hover:bg-gray-400 text-gray-800">Đóng lại</button><button onClick={() => window.print()} className="px-4 py-2 md:px-8 md:py-2 text-sm md:text-base bg-blue-600 text-white font-bold rounded flex items-center gap-2 hover:bg-blue-700 shadow-md"><Printer className="w-4 h-4 md:w-5 md:h-5" /> In Phiếu Này</button></div>
+            </div>
+          </div>
+        )}
       </div>
+      <div className="hidden print-only">{transactionToPrint && <ReceiptContent t={transactionToPrint} />}</div>
     </>
   );
 }
