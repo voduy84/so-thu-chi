@@ -49,7 +49,6 @@ export default function App() {
   const [showFilter, setShowFilter] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   
-  // Yêu cầu 2: Mặc định hiển thị Tháng hiện tại
   const [dateFilter, setDateFilter] = useState('month');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -144,7 +143,6 @@ export default function App() {
   const getNumber = (val) => parseInt(val?.toString().replace(/,/g, '')) || 0;
   const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 
-  // Lọc và Sắp xếp theo yêu cầu 1 & 2
   const filteredTransactions = useMemo(() => {
     let filtered = transactions.filter(t => t.project_id === selectedProjectId);
     const today = new Date();
@@ -186,6 +184,8 @@ export default function App() {
     curr.type === 'income' ? acc.income += curr.amount : acc.expense += curr.amount;
     return acc;
   }, { income: 0, expense: 0 }), [activeTransactionsForDashboard]);
+
+  const netBalance = summary.income - summary.expense;
 
   const chartData = useMemo(() => {
     const grouped = {};
@@ -357,7 +357,6 @@ export default function App() {
     } catch (err) { alert('Lỗi đọc Excel!'); setIsImporting(false); e.target.value = null; }
   };
 
-  // === YÊU CẦU 4: XUẤT EXCEL CÓ THÊM DÒNG TỔNG KẾT ===
   const ExportExcelModal = () => {
     const [exportType, setExportType] = useState('filter'); 
     const [startDate, setStartDate] = useState('');
@@ -405,8 +404,10 @@ export default function App() {
         };
       });
 
-      // Thêm dòng tổng kết theo yêu cầu 4
-      excelRows.push({}); // Dòng trống ngăn cách
+      const netExcel = totalIncome - totalExpense;
+      const labelChenhLech = netExcel >= 0 ? 'DƯ NỢ (THUỶ NỢ CTY)' : 'DƯ CÓ (CTY NỢ THUỶ)';
+
+      excelRows.push({}); 
       excelRows.push({
         'Ngày': 'TỔNG CỘNG',
         'Giờ': '',
@@ -417,12 +418,12 @@ export default function App() {
         'Tiền Chi (VNĐ)': totalExpense
       });
       excelRows.push({
-        'Ngày': 'CHÊNH LỆCH (THU - CHI)',
+        'Ngày': labelChenhLech,
         'Giờ': '',
         'Danh Mục': '',
         'Ghi Chú': '',
         'Người Nhập': '',
-        'Tiền Thu (VNĐ)': totalIncome - totalExpense,
+        'Tiền Thu (VNĐ)': netExcel,
         'Tiền Chi (VNĐ)': ''
       });
 
@@ -645,7 +646,6 @@ export default function App() {
 
               {activeTab === 'dashboard' && (
                 <div className="space-y-4 md:space-y-6">
-                  {/* Yêu cầu 1 & 2: Bộ lọc thời gian với mặc định là Tháng này + Nút Tùy chỉnh khoảng thời gian */}
                   <div className="bg-white p-3 rounded-xl border shadow-sm">
                     <p className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">Khoảng thời gian thống kê:</p>
                     <div className="grid grid-cols-5 gap-1.5">
@@ -668,11 +668,18 @@ export default function App() {
                     {showFilter && (<div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">{categories.map(cat => (<label key={cat.id} className="flex items-center gap-1.5 cursor-pointer px-2 py-1.5 md:p-2 bg-gray-50 rounded border hover:bg-gray-100 text-xs md:text-sm"><input type="checkbox" checked={!uncheckedCategories.includes(cat.name)} onChange={() => { setUncheckedCategories(prev => prev.includes(cat.name) ? prev.filter(c => c !== cat.name) : [...prev, cat.name]) }} className="w-4 h-4 md:w-5 md:h-5 accent-blue-600" /><span className={`font-bold ${cat.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>{cat.name}</span></label>))}</div>)}
                   </div>
 
-                  {/* Hiển thị tổng thu, tổng chi và phần chênh lệch */}
+                  {/* 3 Thẻ Tổng Thu, Tổng Chi và Chênh Lệch đổi tên động theo Dư Nợ / Dư Có */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-6">
                     <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-green-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">TỔNG THU (Đã Lọc)</p><p className="text-xl md:text-3xl font-extrabold text-green-600">{formatCurrency(summary.income)} đ</p></div>
                     <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-red-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">TỔNG CHI (Đã Lọc)</p><p className="text-xl md:text-3xl font-extrabold text-red-600">{formatCurrency(summary.expense)} đ</p></div>
-                    <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-blue-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">CHÊNH LỆCH (THU - CHI)</p><p className="text-xl md:text-3xl font-extrabold text-blue-700">{formatCurrency(summary.income - summary.expense)} đ</p></div>
+                    <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-blue-500 shadow-sm">
+                      <p className="font-bold text-xs md:text-sm mb-1 text-gray-500">
+                        {netBalance >= 0 ? "DƯ NỢ (THUỶ NỢ CTY)" : "DƯ CÓ (CTY NỢ THUỶ)"}
+                      </p>
+                      <p className={`text-xl md:text-3xl font-extrabold ${netBalance >= 0 ? 'text-blue-700' : 'text-orange-600'}`}>
+                        {formatCurrency(netBalance)} đ
+                      </p>
+                    </div>
                   </div>
                   
                   <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border">
