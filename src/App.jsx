@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Plus, Trash2, X, Settings, Home, PieChart, List, Calendar, FileText, Filter, BookOpen, Lock, User, ShieldAlert, Printer, ChevronDown, ChevronUp, Key, Download, Edit, Search, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, X, Settings, PieChart, List, Filter, BookOpen, Lock, User, Printer, ChevronDown, ChevronUp, Download, Edit, Search, Upload, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -42,19 +42,28 @@ export default function App() {
   const [editingTx, setEditingTx] = useState(null); 
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [showChangePassModal, setShowChangePassModal] = useState(false); 
   const [showExportModal, setShowExportModal] = useState(false);
   
   const [transactionToPrint, setTransactionToPrint] = useState(null);
   const [showFilter, setShowFilter] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   
+  // Bộ lọc cho tab Thống kê
   const [dateFilter, setDateFilter] = useState('month');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
-
   const [chartGroup, setChartGroup] = useState('month');
   const [uncheckedCategories, setUncheckedCategories] = useState([]);
+
+  // Bộ lọc chi tiết cho tab Giao dịch
+  const [txTypeFilter, setTxTypeFilter] = useState('all'); // 'all' | 'income' | 'expense'
+  const [txTimeMode, setTxTimeMode] = useState('all'); // 'all' | 'month' | 'day' | 'range'
+  const [txMonthFilter, setTxMonthFilter] = useState(''); // 'YYYY-MM'
+  const [txDayFilter, setTxDayFilter] = useState(''); // 'YYYY-MM-DD'
+  const [txFromDate, setTxFromDate] = useState('');
+  const [txToDate, setTxToDate] = useState('');
+  const [txCategoryFilter, setTxCategoryFilter] = useState('all');
+  const [txCreatorFilter, setTxCreatorFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -72,7 +81,11 @@ export default function App() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [dateFilter, searchTerm, selectedProjectId, customStartDate, customEndDate]);
+  }, [
+    dateFilter, customStartDate, customEndDate,
+    txTypeFilter, txTimeMode, txMonthFilter, txDayFilter, txFromDate, txToDate,
+    txCategoryFilter, txCreatorFilter, searchTerm, selectedProjectId
+  ]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -135,7 +148,7 @@ export default function App() {
   };
 
   const formatCurrency = (val) => {
-    if (!val) return '';
+    if (val === undefined || val === null || val === '') return '';
     const num = parseInt(val.toString().replace(/,/g, ''));
     return isNaN(num) ? '' : num.toLocaleString('en-US');
   };
@@ -143,53 +156,65 @@ export default function App() {
   const getNumber = (val) => parseInt(val?.toString().replace(/,/g, '')) || 0;
   const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 
-  const filteredTransactions = useMemo(() => {
-    let filtered = transactions.filter(t => t.project_id === selectedProjectId);
+  const sortByDateAndCreated = (a, b) => {
+    const dateDiff = new Date(b.date) - new Date(a.date);
+    if (dateDiff !== 0) return dateDiff;
+    return new Date(b.created_at) - new Date(a.created_at);
+  };
+
+  // Giao dịch thuộc sổ hiện tại
+  const projectTransactions = useMemo(() => {
+    return transactions
+      .filter(t => t.project_id === selectedProjectId)
+      .sort(sortByDateAndCreated);
+  }, [transactions, selectedProjectId]);
+
+  // Danh sách người nhập duy nhất để lọc nhanh
+  const creatorOptions = useMemo(() => {
+    const set = new Set();
+    projectTransactions.forEach(t => {
+      if (t.created_by) set.add(t.created_by);
+    });
+    return Array.from(set);
+  }, [projectTransactions]);
+
+  // Danh sách danh mục duy nhất (gồm cả danh mục có trong giao dịch cũ)
+  const categoryFilterOptions = useMemo(() => {
+    const set = new Set(categories.map(c => c.name));
+    projectTransactions.forEach(t => {
+      if (t.category) set.add(t.category);
+    });
+    return Array.from(set);
+  }, [categories, projectTransactions]);
+
+  // Lọc dành cho tab Thống kê
+  const dashboardFilteredTransactions = useMemo(() => {
+    let filtered = [...projectTransactions];
     const today = new Date();
     if (dateFilter === 'today') {
       filtered = filtered.filter(t => t.date === today.toISOString().split('T')[0]);
     } else if (dateFilter === 'month') {
-      filtered = filtered.filter(t => t.date.startsWith(today.toISOString().slice(0, 7)));
+      filtered = filtered.filter(t => t.date?.startsWith(today.toISOString().slice(0, 7)));
     } else if (dateFilter === 'year') {
-      filtered = filtered.filter(t => t.date.startsWith(today.toISOString().slice(0, 4)));
+      filtered = filtered.filter(t => t.date?.startsWith(today.toISOString().slice(0, 4)));
     } else if (dateFilter === 'custom') {
-      if (customStartDate && customEndDate) {
-        filtered = filtered.filter(t => t.date >= customStartDate && t.date <= customEndDate);
-      }
+      if (customStartDate) filtered = filtered.filter(t => t.date >= customStartDate);
+      if (customEndDate) filtered = filtered.filter(t => t.date <= customEndDate);
     }
-    
-    return filtered.sort((a, b) => {
-      const dateDiff = new Date(b.date) - new Date(a.date);
-      if (dateDiff !== 0) return dateDiff;
-      return new Date(b.created_at) - new Date(a.created_at);
-    });
-  }, [transactions, selectedProjectId, dateFilter, customStartDate, customEndDate]);
+    return filtered.filter(t => !uncheckedCategories.includes(t.category));
+  }, [projectTransactions, dateFilter, customStartDate, customEndDate, uncheckedCategories]);
 
-  const displayTransactions = useMemo(() => {
-    if (!searchTerm.trim()) return filteredTransactions;
-    const lower = searchTerm.toLowerCase();
-    return filteredTransactions.filter(t => 
-      ((t.description || '').toLowerCase().includes(lower)) || 
-      ((t.category || '').toLowerCase().includes(lower)) ||
-      ((t.created_by || '').toLowerCase().includes(lower)) ||
-      (t.amount.toString().includes(lower))
-    );
-  }, [filteredTransactions, searchTerm]);
-
-  const activeTransactionsForDashboard = useMemo(() => {
-    return displayTransactions.filter(t => !uncheckedCategories.includes(t.category));
-  }, [displayTransactions, uncheckedCategories]);
-
-  const summary = useMemo(() => activeTransactionsForDashboard.reduce((acc, curr) => {
+  const summary = useMemo(() => dashboardFilteredTransactions.reduce((acc, curr) => {
     curr.type === 'income' ? acc.income += curr.amount : acc.expense += curr.amount;
     return acc;
-  }, { income: 0, expense: 0 }), [activeTransactionsForDashboard]);
+  }, { income: 0, expense: 0 }), [dashboardFilteredTransactions]);
 
   const netBalance = summary.income - summary.expense;
 
   const chartData = useMemo(() => {
     const grouped = {};
-    activeTransactionsForDashboard.forEach(t => {
+    dashboardFilteredTransactions.forEach(t => {
+      if (!t.date) return;
       let key = t.date;
       if (chartGroup === 'month') key = t.date.slice(0, 7);
       if (chartGroup === 'year') key = t.date.slice(0, 4);
@@ -197,18 +222,88 @@ export default function App() {
       grouped[key][t.type] += t.amount;
     });
     return Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name));
-  }, [activeTransactionsForDashboard, chartGroup]);
+  }, [dashboardFilteredTransactions, chartGroup]);
+
+  // Lọc chuyên sâu cho tab Giao dịch (Thu/Chi + Tháng/Ngày/Khoảng ngày + Danh mục + Người nhập + Từ khóa)
+  const filteredListTransactions = useMemo(() => {
+    let list = [...projectTransactions];
+
+    if (txTypeFilter !== 'all') {
+      list = list.filter(t => t.type === txTypeFilter);
+    }
+
+    if (txTimeMode === 'month' && txMonthFilter) {
+      list = list.filter(t => t.date?.startsWith(txMonthFilter));
+    } else if (txTimeMode === 'day' && txDayFilter) {
+      list = list.filter(t => t.date === txDayFilter);
+    } else if (txTimeMode === 'range') {
+      if (txFromDate) list = list.filter(t => t.date >= txFromDate);
+      if (txToDate) list = list.filter(t => t.date <= txToDate);
+    }
+
+    if (txCategoryFilter !== 'all') {
+      list = list.filter(t => t.category === txCategoryFilter);
+    }
+
+    if (txCreatorFilter !== 'all') {
+      list = list.filter(t => (t.created_by || 'Khuyết danh') === txCreatorFilter);
+    }
+
+    if (searchTerm.trim()) {
+      const lower = searchTerm.toLowerCase();
+      list = list.filter(t =>
+        ((t.description || '').toLowerCase().includes(lower)) ||
+        ((t.category || '').toLowerCase().includes(lower)) ||
+        ((t.created_by || '').toLowerCase().includes(lower)) ||
+        ((t.date || '').toLowerCase().includes(lower)) ||
+        (t.amount?.toString().includes(lower))
+      );
+    }
+
+    return list;
+  }, [
+    projectTransactions, txTypeFilter, txTimeMode, txMonthFilter,
+    txDayFilter, txFromDate, txToDate, txCategoryFilter, txCreatorFilter, searchTerm
+  ]);
+
+  const listTotals = useMemo(() => {
+    return filteredListTransactions.reduce((acc, t) => {
+      if (t.type === 'income') acc.income += t.amount;
+      else acc.expense += t.amount;
+      return acc;
+    }, { income: 0, expense: 0 });
+  }, [filteredListTransactions]);
+
+  const hasActiveListFilter =
+    txTypeFilter !== 'all' ||
+    txTimeMode !== 'all' ||
+    txCategoryFilter !== 'all' ||
+    txCreatorFilter !== 'all' ||
+    searchTerm.trim() !== '';
+
+  const resetListFilters = () => {
+    setTxTypeFilter('all');
+    setTxTimeMode('all');
+    setTxMonthFilter('');
+    setTxDayFilter('');
+    setTxFromDate('');
+    setTxToDate('');
+    setTxCategoryFilter('all');
+    setTxCreatorFilter('all');
+    setSearchTerm('');
+  };
 
   const paginatedData = useMemo(() => {
-    const limitedData = displayTransactions.slice(0, MAX_DISPLAY_ITEMS);
+    const limitedData = filteredListTransactions.slice(0, MAX_DISPLAY_ITEMS);
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
     return {
       items: limitedData.slice(startIndex, startIndex + ITEMS_PER_PAGE),
       totalPages: Math.ceil(limitedData.length / ITEMS_PER_PAGE),
       totalLimited: limitedData.length,
-      isCapped: displayTransactions.length > MAX_DISPLAY_ITEMS
+      totalMatched: filteredListTransactions.length,
+      isCapped: filteredListTransactions.length > MAX_DISPLAY_ITEMS
     };
-  }, [displayTransactions, currentPage]);
+  }, [filteredListTransactions, currentPage]);
 
   const checkAdmin = () => {
     if (currentUser?.role !== 'admin') { alert('Chỉ tài khoản Quản Lý mới có quyền thao tác này!'); return false; }
@@ -366,24 +461,23 @@ export default function App() {
 
     const handleExecuteExport = async () => {
       let dataToExport = [];
-      const projectTxs = transactions.filter(t => t.project_id === selectedProjectId);
 
       if (exportType === 'filter') {
-        dataToExport = displayTransactions; 
+        dataToExport = filteredListTransactions; 
       } else if (exportType === 'range') {
         if (!startDate || !endDate) return alert('Vui lòng chọn Ngày Bắt Đầu và Ngày Kết Thúc');
         if (startDate > endDate) return alert('Ngày bắt đầu không được lớn hơn ngày kết thúc');
-        dataToExport = projectTxs.filter(t => t.date >= startDate && t.date <= endDate);
+        dataToExport = projectTransactions.filter(t => t.date >= startDate && t.date <= endDate);
       } else if (exportType === 'specific') {
         if (!specificValue) return alert('Vui lòng nhập thời gian cụ thể');
-        dataToExport = projectTxs.filter(t => t.date.startsWith(specificValue));
+        dataToExport = projectTransactions.filter(t => t.date?.startsWith(specificValue));
       }
 
       if (dataToExport.length === 0) {
         return alert('Không có dữ liệu giao dịch nào trong phạm vi bạn chọn!');
       }
 
-      dataToExport.sort((a, b) => new Date(b.date) - new Date(a.date));
+      dataToExport = [...dataToExport].sort(sortByDateAndCreated);
 
       let totalIncome = 0;
       let totalExpense = 0;
@@ -449,7 +543,7 @@ export default function App() {
                 <input type="radio" name="expType" checked={exportType === 'filter'} onChange={() => setExportType('filter')} className="w-5 h-5 accent-blue-600" />
                 <span className="font-bold text-gray-800">1. Xuất theo bộ lọc hiện tại</span>
               </div>
-              <p className="text-xs text-gray-500 mt-1 pl-8">Sẽ xuất {displayTransactions.length} giao dịch đang hiển thị ở bảng bên ngoài.</p>
+              <p className="text-xs text-gray-500 mt-1 pl-8">Sẽ xuất {filteredListTransactions.length} giao dịch khớp bộ lọc hiện tại.</p>
             </label>
 
             <label className={`block p-3 border-2 rounded-lg cursor-pointer ${exportType === 'range' ? 'border-blue-600 bg-blue-50' : 'border-gray-200'}`}>
@@ -479,7 +573,7 @@ export default function App() {
                   </select>
                   {specificType === 'day' && <input type="date" value={specificValue} onChange={e => setSpecificValue(e.target.value)} className="w-full border p-2 rounded text-sm" />}
                   {specificType === 'month' && <input type="month" value={specificValue} onChange={e => setSpecificValue(e.target.value)} className="w-full border p-2 rounded text-sm" />}
-                  {specificType === 'year' && <input type="number" placeholder="Nhập năm (VD: 2024)" value={specificValue} onChange={e => setSpecificValue(e.target.value)} className="w-full border p-2 rounded text-sm" min="2000" max="2100" />}
+                  {specificType === 'year' && <input type="number" placeholder="Nhập năm (VD: 2026)" value={specificValue} onChange={e => setSpecificValue(e.target.value)} className="w-full border p-2 rounded text-sm" min="2000" max="2100" />}
                 </div>
               )}
             </label>
@@ -578,6 +672,41 @@ export default function App() {
     );
   };
 
+  const CreateTemplateModal = () => {
+    const [name, setName] = useState('');
+    const [txType, setTxType] = useState('expense');
+    const [amountStr, setAmountStr] = useState('');
+    const [category, setCategory] = useState(categories.filter(c => c.type === 'expense')[0]?.name || '');
+    const [desc, setDesc] = useState('');
+
+    const handleSaveTemplate = () => {
+      if (!name.trim()) return alert('Vui lòng nhập tên Mẫu');
+      handleAddTemplate({ name, type: txType, amount: getNumber(amountStr), category, description: desc });
+      setShowTemplateModal(false);
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-2 md:p-4 z-50">
+        <div className="bg-white rounded-xl max-w-lg w-full p-4 md:p-6 shadow-xl max-h-[95vh] overflow-y-auto">
+          <div className="flex justify-between items-center mb-4 md:mb-6"><h3 className="text-xl md:text-2xl font-bold">Tạo Mẫu Nhanh</h3><button onClick={() => setShowTemplateModal(false)}><X className="text-gray-500 w-6 h-6 md:w-8 md:h-8" /></button></div>
+          <div className="flex gap-2 mb-4 md:mb-6">
+            <button className={`flex-1 py-2 md:py-3 text-sm md:text-base font-bold rounded-lg ${txType === 'income' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('income'); setCategory(categories.find(c => c.type === 'income')?.name || ''); }}>MẪU THU</button>
+            <button className={`flex-1 py-2 md:py-3 text-sm md:text-base font-bold rounded-lg ${txType === 'expense' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600'}`} onClick={() => { setTxType('expense'); setCategory(categories.find(c => c.type === 'expense')?.name || ''); }}>MẪU CHI</button>
+          </div>
+          <div className="space-y-3 md:space-y-4">
+            <div><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Tên Mẫu *</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full p-2 md:p-3 text-sm md:text-base border-2 rounded-lg" autoFocus /></div>
+            <div className="flex flex-col md:flex-row gap-3 md:gap-4">
+              <div className="flex-1"><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Số Tiền (Tùy chọn)</label><input type="text" value={amountStr} onChange={(e) => setAmountStr(formatCurrency(e.target.value))} className="w-full p-2 md:p-3 text-sm md:text-base border-2 rounded-lg" /></div>
+              <div className="flex-1"><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Danh Mục</label><select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full p-2 md:p-3 text-sm md:text-base border-2 rounded-lg">{categories.filter(c => c.type === txType).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
+            </div>
+            <div><label className="block text-sm md:text-base font-bold mb-1 md:mb-2">Ghi Chú</label><input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} className="w-full p-2 md:p-3 text-sm md:text-base border-2 rounded-lg" /></div>
+          </div>
+          <div className="mt-6 md:mt-8 flex justify-end gap-3 md:gap-4"><button onClick={() => setShowTemplateModal(false)} className="px-4 py-2 md:px-6 md:py-3 text-sm md:text-base bg-gray-200 font-bold rounded-lg">Hủy</button><button onClick={handleSaveTemplate} className="px-4 py-2 md:px-6 md:py-3 text-sm md:text-base bg-blue-600 text-white font-bold rounded-lg">Lưu Mẫu</button></div>
+        </div>
+      </div>
+    );
+  };
+
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
@@ -668,7 +797,6 @@ export default function App() {
                     {showFilter && (<div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">{categories.map(cat => (<label key={cat.id} className="flex items-center gap-1.5 cursor-pointer px-2 py-1.5 md:p-2 bg-gray-50 rounded border hover:bg-gray-100 text-xs md:text-sm"><input type="checkbox" checked={!uncheckedCategories.includes(cat.name)} onChange={() => { setUncheckedCategories(prev => prev.includes(cat.name) ? prev.filter(c => c !== cat.name) : [...prev, cat.name]) }} className="w-4 h-4 md:w-5 md:h-5 accent-blue-600" /><span className={`font-bold ${cat.type === 'income' ? 'text-green-700' : 'text-red-700'}`}>{cat.name}</span></label>))}</div>)}
                   </div>
 
-                  {/* 3 Thẻ Tổng Thu, Tổng Chi và Chênh Lệch đổi tên động theo Dư Nợ / Dư Có */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-6">
                     <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-green-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">TỔNG THU (Đã Lọc)</p><p className="text-xl md:text-3xl font-extrabold text-green-600">{formatCurrency(summary.income)} đ</p></div>
                     <div className="bg-white p-4 md:p-6 rounded-xl border-l-8 border-red-500 shadow-sm"><p className="font-bold text-xs md:text-sm mb-1 text-gray-500">TỔNG CHI (Đã Lọc)</p><p className="text-xl md:text-3xl font-extrabold text-red-600">{formatCurrency(summary.expense)} đ</p></div>
@@ -691,18 +819,111 @@ export default function App() {
 
               {activeTab === 'list' && (
                 <div className="space-y-4">
-                  <div className="flex flex-col md:flex-row justify-between items-center bg-white p-3 rounded-xl border shadow-sm gap-3">
-                    <span className="text-sm font-bold text-gray-700 w-full md:w-auto">
-                      Đang hiển thị {paginatedData.totalLimited} {paginatedData.isCapped && '(Tối đa)'} kết quả
-                    </span>
-                    <div className="flex gap-2 w-full md:w-auto">
-                      <div className="relative flex-1 md:w-64">
-                        <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                        <input type="text" placeholder="Tìm tên, ghi chú, số tiền..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm bg-gray-50 focus:bg-white" />
+                  {/* BỘ LỌC & TÌM KIẾM GIAO DỊCH */}
+                  <div className="bg-white p-3 md:p-4 rounded-xl border shadow-sm space-y-3">
+                    <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-bold text-gray-800">
+                          Khớp lọc: <span className="text-blue-700">{paginatedData.totalMatched}</span> giao dịch
+                          {paginatedData.isCapped && <span className="text-xs text-gray-500 font-normal"> (hiển thị tối đa {MAX_DISPLAY_ITEMS})</span>}
+                        </span>
+                        {hasActiveListFilter && (
+                          <button onClick={resetListFilters} className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">
+                            <RotateCcw className="w-3.5 h-3.5" /> Xóa bộ lọc
+                          </button>
+                        )}
                       </div>
-                      <button onClick={() => setShowExportModal(true)} className="flex items-center gap-1 bg-green-600 text-white px-3 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow whitespace-nowrap">
-                        <Download className="w-4 h-4" /> Xuất Excel
-                      </button>
+
+                      <div className="flex gap-2 w-full md:w-auto">
+                        <div className="relative flex-1 md:w-64">
+                          <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                          <input type="text" placeholder="Tìm danh mục, ghi chú, tiền..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm bg-gray-50 focus:bg-white" />
+                        </div>
+                        <button onClick={() => setShowExportModal(true)} className="flex items-center gap-1 bg-green-600 text-white px-3 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow whitespace-nowrap">
+                          <Download className="w-4 h-4" /> Xuất Excel
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Hàng 1: Loại giao dịch (Tất cả / Thu / Chi) + Chế độ thời gian */}
+                    <div className="flex flex-col md:flex-row gap-3 pt-2 border-t text-sm">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-gray-500 whitespace-nowrap">Loại:</span>
+                        <div className="inline-flex rounded-lg border bg-gray-50 p-0.5">
+                          <button onClick={() => setTxTypeFilter('all')} className={`px-2.5 py-1 rounded-md text-xs font-bold transition ${txTypeFilter === 'all' ? 'bg-blue-600 text-white' : 'text-gray-700 hover:bg-gray-200'}`}>Tất cả</button>
+                          <button onClick={() => setTxTypeFilter('income')} className={`px-2.5 py-1 rounded-md text-xs font-bold transition ${txTypeFilter === 'income' ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-200'}`}>Chỉ Thu</button>
+                          <button onClick={() => setTxTypeFilter('expense')} className={`px-2.5 py-1 rounded-md text-xs font-bold transition ${txTypeFilter === 'expense' ? 'bg-red-600 text-white' : 'text-gray-700 hover:bg-gray-200'}`}>Chỉ Chi</button>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 flex-1">
+                        <span className="text-xs font-bold text-gray-500 whitespace-nowrap">Thời gian:</span>
+                        <select
+                          value={txTimeMode}
+                          onChange={(e) => setTxTimeMode(e.target.value)}
+                          className="border rounded-lg px-2.5 py-1.5 text-xs md:text-sm font-bold bg-gray-50"
+                        >
+                          <option value="all">Mọi thời điểm</option>
+                          <option value="month">Theo Tháng</option>
+                          <option value="day">Theo Ngày</option>
+                          <option value="range">Khoảng ngày (Từ - Đến)</option>
+                        </select>
+
+                        {txTimeMode === 'month' && (
+                          <input
+                            type="month"
+                            value={txMonthFilter}
+                            onChange={(e) => setTxMonthFilter(e.target.value)}
+                            className="border rounded-lg px-2.5 py-1 text-xs md:text-sm"
+                          />
+                        )}
+
+                        {txTimeMode === 'day' && (
+                          <input
+                            type="date"
+                            value={txDayFilter}
+                            onChange={(e) => setTxDayFilter(e.target.value)}
+                            className="border rounded-lg px-2.5 py-1 text-xs md:text-sm"
+                          />
+                        )}
+
+                        {txTimeMode === 'range' && (
+                          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                            <span>Từ:</span>
+                            <input type="date" value={txFromDate} onChange={(e) => setTxFromDate(e.target.value)} className="border rounded-lg px-2 py-1" />
+                            <span>Đến:</span>
+                            <input type="date" value={txToDate} onChange={(e) => setTxToDate(e.target.value)} className="border rounded-lg px-2 py-1" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Hàng 2: Lọc Danh mục & Người nhập + Tổng hợp nhanh kết quả lọc */}
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 pt-2 border-t text-xs md:text-sm">
+                      <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                        <select
+                          value={txCategoryFilter}
+                          onChange={(e) => setTxCategoryFilter(e.target.value)}
+                          className="border rounded-lg px-2.5 py-1.5 bg-gray-50 font-medium"
+                        >
+                          <option value="all">Tất cả danh mục</option>
+                          {categoryFilterOptions.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                        </select>
+
+                        <select
+                          value={txCreatorFilter}
+                          onChange={(e) => setTxCreatorFilter(e.target.value)}
+                          className="border rounded-lg px-2.5 py-1.5 bg-gray-50 font-medium"
+                        >
+                          <option value="all">Tất cả người nhập</option>
+                          {creatorOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3 bg-gray-50 px-3 py-1.5 rounded-lg border w-full md:w-auto justify-between md:justify-end">
+                        <span className="font-bold text-green-700">Thu: +{formatCurrency(listTotals.income) || 0}đ</span>
+                        <span className="font-bold text-red-600">Chi: -{formatCurrency(listTotals.expense) || 0}đ</span>
+                      </div>
                     </div>
                   </div>
 
@@ -721,7 +942,7 @@ export default function App() {
                             <td className="p-3 md:p-4 text-center"><button onClick={() => handleDeleteTransaction(t.id)} className="text-red-400 hover:text-red-600 mx-auto block p-1.5 md:p-2 rounded hover:bg-red-50" title="Xóa"><Trash2 className="w-4 h-4 md:w-5 md:h-5" /></button></td>
                           </tr>
                         ))}
-                        {paginatedData.items.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-gray-500 font-medium">Không tìm thấy giao dịch nào.</td></tr>}
+                        {paginatedData.items.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-gray-500 font-medium">Không tìm thấy giao dịch nào phù hợp bộ lọc.</td></tr>}
                       </tbody>
                     </table>
                   </div>
